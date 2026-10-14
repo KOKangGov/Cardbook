@@ -218,6 +218,17 @@ body.locked #btnTidy{display:none}
 .ico{width:17px;height:17px;flex:none}
 .pick-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
 .pick-row .btn{justify-content:center}
+.match{border:1px solid var(--accent);background:var(--accent-soft);border-radius:10px;padding:12px 14px;margin-top:14px;display:grid;gap:10px;font-size:14px}
+.match>strong{font-size:15px}
+.match .help{margin:0}
+.match-list{display:grid;gap:6px}
+.match-row{display:flex;gap:10px;align-items:center;justify-content:space-between;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.match-row>div{min-width:0;overflow-wrap:anywhere}
+.match-row small{display:block;color:var(--muted);font-size:12.5px}
+.match .changes{margin-top:0}
+.match .check{margin-top:0}
+.match .chg-new{color:var(--accent);font-weight:500}
+.match input[type=search]{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:9px 11px;font-size:15px;width:100%}
 .just{border:1px solid var(--accent);background:var(--accent-soft);border-radius:10px;padding:10px 12px;margin-bottom:12px;display:grid;gap:8px;font-size:14px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;z-index:40;box-shadow:var(--shadow)}
 </style>
@@ -468,7 +479,7 @@ body.locked #btnTidy{display:none}
     const i = dueInfo(c);
     openSheet(`
       <div class="sheet-head"><h2>명함 정보</h2><button class="btn ghost" data-act="close" type="button">닫기</button></div>
-      ${opt.justAdded ? `<div class="just"><span>명함을 등록했습니다. 이어서 다음 명함을 찍을 수 있어요.</span><div class="row"><span class="btn primary file-btn"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5h3l1.4-2h5.2l1.4 2h3v9.5H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="10" cy="11" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>다음 명함 촬영<input id="nx_cam" type="file" accept="image/*" capture="environment" aria-label="다음 명함 촬영"></span><button class="btn" data-act="pick" type="button">다른 방법으로 추가</button></div></div>` : ""}
+      ${opt.justAdded || opt.justUpdated ? `<div class="just"><span>${opt.justUpdated ? "명함을 업데이트했습니다. 바뀐 내용은 연락 기록에 남겼어요." : "명함을 등록했습니다."} 이어서 다음 명함을 찍을 수 있어요.</span><div class="row"><span class="btn primary file-btn"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5h3l1.4-2h5.2l1.4 2h3v9.5H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="10" cy="11" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>다음 명함 촬영<input id="nx_cam" type="file" accept="image/*" capture="environment" aria-label="다음 명함 촬영"></span><button class="btn" data-act="pick" type="button">다른 방법으로 추가</button></div></div>` : ""}
       ${c.hasPhoto ? `<div class="photo" id="photoBox">사진 불러오는 중…</div>` : ""}
       <div class="big-name">${esc(c.name || "(이름 없음)")}</div>
       <div class="sub">${esc([c.company, c.dept, c.title].filter(Boolean).join(" · "))}</div>
@@ -502,9 +513,14 @@ body.locked #btnTidy{display:none}
 
       <div class="footer-actions">
         <span id="delWrap"><button class="btn danger" data-act="askdel" type="button">삭제</button></span>
-        <button class="btn" data-act="edit" type="button">수정</button>
+        <span class="row">
+          <span class="btn file-btn"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5h3l1.4-2h5.2l1.4 2h3v9.5H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="10" cy="11" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>명함 다시 찍기<input id="re_cam" type="file" accept="image/*" capture="environment" aria-label="새 명함을 찍어 이 명함 업데이트"></span>
+          <button class="btn" data-act="edit" type="button">수정</button>
+        </span>
       </div>`);
     sheet.dataset.id = id;
+    const re = $("#re_cam");
+    if (re) re.addEventListener("change", e => { const f = e.target.files[0]; if (!f) return; showEdit(null, { mergeId: id }); pickPhoto(f, { read: true }); });
     const nx = $("#nx_cam");
     if (nx) nx.addEventListener("change", e => { const f = e.target.files[0]; if (!f) return; showEdit(null); pickPhoto(f, { read: true }); });
     if (c.hasPhoto) store.photoGet(id).then(src => { const b = $("#photoBox"); if (!b) return; b.innerHTML = src ? `<img alt="${esc(c.name)} 명함 사진" src="${src}">` : "사진이 없습니다"; }).catch(() => { const b = $("#photoBox"); if (b) b.textContent = "사진을 불러오지 못했습니다"; });
@@ -640,14 +656,15 @@ body.locked #btnTidy{display:none}
 
   // ---------- edit ----------
   let pendingPhoto = null; // {dataUrl, blob}
-  function showEdit(id) {
+  function showEdit(id, eopt = {}) {
     const c = id ? state.cards.find(x => x.id === id) : {};
+    const mt = eopt.mergeId && state.cards.find(x => x.id === eopt.mergeId);
     if (id && !c) return;
     pendingPhoto = null; crop = null;
     const v = k => esc(k === "tags" ? (c.tags || []).join(", ") : (c[k] || ""));
     const inp = (k, type = "text", full = false, extra = "") => `<div class="field ${full ? "full" : ""}"><label for="f_${k}">${LABEL[k]}</label><input id="f_${k}" type="${type}" value="${v(k)}" ${extra}></div>`;
     openSheet(`
-      <div class="sheet-head"><h2>${id ? "명함 수정" : "명함 추가"}</h2><button class="btn ghost" data-act="close" type="button">닫기</button></div>
+      <div class="sheet-head"><h2>${id ? "명함 수정" : mt ? `${esc(mt.name || mt.company || "")} 명함 업데이트` : "명함 추가"}</h2><button class="btn ghost" data-act="close" type="button">닫기</button></div>
       <label class="drop" id="drop" for="f_photo">
         <span id="dropInner">${id && c.hasPhoto ? "사진을 바꾸려면 눌러서 새 사진을 고르세요" : "명함 사진을 눌러서 고르거나 여기로 끌어다 놓으세요"}</span>
       </label>
@@ -666,6 +683,7 @@ body.locked #btnTidy{display:none}
         <span class="status" id="readStatus">${id ? "새 사진을 고른 뒤 ‘사진 다시 읽기’를 누르면 빈칸을 채웁니다." : "명함을 찍거나 고르면 글자를 읽어 빈칸을 채웁니다."}</span>
       </div>
       <details class="raw" id="rawText" hidden><summary>인식된 글자 전체 보기</summary><textarea id="rawTa" rows="6" readonly aria-label="인식된 글자"></textarea><p class="help">빈칸에 옮길 부분을 길게 눌러 복사하세요.</p></details>
+      <div id="matchBox" hidden></div>
       <form class="form" id="editForm" style="margin-top:16px" novalidate>
         ${inp("name", "text", false, 'autocomplete="off"')}${inp("company")}
         ${inp("dept")}${inp("title")}
@@ -684,6 +702,9 @@ body.locked #btnTidy{display:none}
       </div>`, "#f_name");
     sheet.dataset.id = id || "";
     sheet.dataset.dupOk = "";
+    sheet.dataset.mergeId = mt ? mt.id : "";
+    if (mt) showDiff(mt.id, { waiting: true });
+    if (!id) $("#editForm").addEventListener("input", () => { if (sheet.dataset.mergeId && $("#matchBox") && !$("#matchBox").hidden) { clearTimeout(diffT); diffT = setTimeout(() => showDiff(sheet.dataset.mergeId), 250); } });
     if (window.CardOCR) CardOCR.preload();
     const fileIn = $("#f_photo"), drop = $("#drop");
     const auto = !id;
@@ -1311,11 +1332,148 @@ body.locked #btnTidy{display:none}
       const raw = $("#rawText"); if (raw) { raw.hidden = !r.text; $("#rawTa").value = r.text; }
       st.className = filled ? "status ok" : "status err";
       st.textContent = filled ? `${filled}개 항목을 채웠습니다. 틀린 곳을 고친 뒤 저장하세요.` : "글자를 거의 찾지 못했습니다. 밝은 곳에서 명함이 화면에 꽉 차게 다시 찍어 보세요.";
+      afterRead();
     } catch (e) {
       if (seq !== readSeq || !st.isConnected) return;
       st.className = "status err";
       st.textContent = navigator.onLine === false ? "처음 인식할 때는 인터넷 연결이 필요합니다. 연결한 뒤 ‘사진 다시 읽기’를 눌러 주세요." : "명함을 읽지 못했습니다. ‘사진 다시 읽기’를 누르거나 직접 입력해 주세요.";
+      afterRead();
     } finally { if (b && b.isConnected) b.disabled = !pendingPhoto; }
+  }
+
+  // ---------- 같은 사람 찾기 · 기존 명함 업데이트 ----------
+  const MERGE_KEYS = ["name", "company", "dept", "title", "mobile", "phone", "fax", "email", "address", "website"];
+  const normCo = v => String(v || "").replace(/주식회사|㈜|\(\s*주\s*\)|\s+/g, "").toLowerCase();
+  const normV = (k, v) => /mobile|phone|fax/.test(k) ? digits(v) : k === "company" ? normCo(v) : String(v || "").replace(/\s+/g, "").toLowerCase();
+  let diffT = 0;
+  function lev(a, b) {
+    const m = a.length, n = b.length; if (!m || !n) return m + n;
+    let prev = Array.from({ length: n + 1 }, (_, j) => j);
+    for (let i = 1; i <= m; i++) { const cur = [i]; for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; }
+    return prev[n];
+  }
+  const AREA = "(?:02|0[3-6][1-5]|070|080|050\\d)";
+  const PHONE_OK = { mobile: /^01[016789]-\d{3,4}-\d{4}$/, phone: new RegExp(`^(?:${AREA}-\\d{3,4}-\\d{4}|1[5689]\\d{2}-\\d{4})$`), fax: new RegExp(`^${AREA}-\\d{3,4}-\\d{4}$`) };
+  // 글자 인식이 틀렸을 가능성이 큰 변경인지 (이때는 기본으로 체크하지 않음)
+  function suspect(k, from, to) {
+    if (PHONE_OK[k]) return !PHONE_OK[k].test(to) ? "번호 형식이 이상해요" : "";
+    if (k === "email") return /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(to) ? "" : "주소 형식이 이상해요";
+    if (!from || k === "title") return ""; // 직책 변경(과장→차장)은 흔한 실제 변화
+    const a = normV(k, from), b = normV(k, to);
+    if (Math.max(a.length, b.length) < 6) return ""; // 짧은 값은 한 글자 차이도 실제 변경일 수 있음
+    return lev(a, b) <= Math.max(1, Math.floor(Math.max(a.length, b.length) * 0.12)) ? "글자 몇 개만 달라요" : "";
+  }
+  function readForm() {
+    const g = k => (($("#f_" + k) || {}).value || "").trim(), d = {};
+    for (const [k] of FIELDS) if (k !== "tags") d[k] = g(k);
+    d.tags = [...new Set(g("tags").split(/[,，#]/).map(s => s.trim()).filter(Boolean))];
+    return d;
+  }
+  function findMatches(d) {
+    const m = digits(d.mobile), e = String(d.email || "").trim().toLowerCase(), nm = normV("name", d.name), co = normCo(d.company), ph = digits(d.phone);
+    return state.cards.map(c => {
+      let sc = 0; const why = [];
+      if (m.length >= 9 && digits(c.mobile) === m) { sc += 4; why.push("휴대폰"); }
+      if (e && String(c.email || "").trim().toLowerCase() === e) { sc += 4; why.push("이메일"); }
+      if (nm.length >= 2 && normV("name", c.name) === nm) { sc += 2; why.push("이름"); }
+      if (co.length >= 2 && normCo(c.company) === co) { sc += 1; why.push("회사"); }
+      if (ph.length >= 9 && digits(c.phone) === ph && sc) { sc += 1; why.push("전화"); }
+      return { c, sc, why };
+    }).filter(x => x.sc >= 2).sort((a, b) => b.sc - a.sc).slice(0, 3);
+  }
+  const whoLine = c => esc([c.company, c.dept, c.title].filter(Boolean).join(" · ") || c.mobile || c.email || "");
+  function afterRead() {
+    if (sheet.dataset.id || !$("#matchBox")) return; // 새 명함을 등록할 때만
+    if (sheet.dataset.mergeId) return showDiff(sheet.dataset.mergeId);
+    const ms = findMatches(readForm());
+    if (ms.length) showMatches(ms);
+  }
+  function showMatches(ms, why) {
+    const box = $("#matchBox"); if (!box) return;
+    sheet.dataset.mergeId = "";
+    box.innerHTML = `<div class="match">
+      <strong>이미 등록된 사람인가요?</strong>
+      <p class="help">${why || "새로 찍은 명함과 비슷한 명함이 있습니다. 같은 사람이면 기존 명함을 업데이트하세요. 메모와 연락 기록은 그대로 남습니다."}</p>
+      <div class="match-list">${ms.map(x => `<div class="match-row"><div><b>${esc(x.c.name || "(이름 없음)")}</b> <span class="sub">${whoLine(x.c)}</span><small>${x.why.join("·")}이(가) 같습니다</small></div><button class="btn primary" data-act="mergepick" data-mid="${esc(x.c.id)}" type="button">업데이트</button></div>`).join("")}</div>
+      <div class="row"><button class="btn ghost" data-act="mergesearch" type="button">다른 사람 찾기</button><button class="btn ghost" data-act="mergenew" type="button">새 명함으로 등록</button></div>
+    </div>`;
+    box.hidden = false; box.scrollIntoView({ block: "nearest" });
+  }
+  function showMergeSearch() {
+    const box = $("#matchBox"); if (!box) return;
+    sheet.dataset.mergeId = "";
+    box.innerHTML = `<div class="match">
+      <strong>업데이트할 명함 찾기</strong>
+      <input type="search" id="mergeQ" placeholder="이름, 회사, 전화번호로 찾기" aria-label="업데이트할 명함 찾기" autocomplete="off">
+      <div class="match-list" id="mergeList"></div>
+      <div class="row"><button class="btn ghost" data-act="mergeclose" type="button">닫기</button></div>
+    </div>`;
+    box.hidden = false;
+    const q = $("#mergeQ"), list = $("#mergeList");
+    const draw = () => {
+      const t = q.value.trim().toLowerCase(), td = digits(t);
+      const hits = t ? state.cards.filter(c => [c.name, c.company, c.dept, c.email].some(v => String(v || "").toLowerCase().includes(t)) || (td.length >= 3 && [c.mobile, c.phone].some(v => digits(v).includes(td)))).slice(0, 8) : [];
+      list.innerHTML = !t ? `<p class="help">이름이나 회사를 입력하세요.</p>` : hits.length ? hits.map(c => `<div class="match-row"><div><b>${esc(c.name || "(이름 없음)")}</b> <span class="sub">${whoLine(c)}</span></div><button class="btn" data-act="mergepick" data-mid="${esc(c.id)}" type="button">선택</button></div>`).join("") : `<p class="help">찾는 명함이 없습니다.</p>`;
+    };
+    q.addEventListener("input", draw); draw(); q.focus({ preventScroll: true }); box.scrollIntoView({ block: "nearest" });
+  }
+  // 업데이트 미리보기: 바뀌는 항목마다 체크(기본 선택), 새 값이 빈 항목은 기존 값을 그대로 둠
+  function showDiff(mid, o = {}) {
+    const box = $("#matchBox"), c = state.cards.find(x => x.id === mid); if (!box || !c) return;
+    sheet.dataset.mergeId = mid;
+    const keep = {}; box.querySelectorAll("input[data-mk]").forEach(x => keep[x.dataset.mk] = x.checked);
+    const keepPhoto = $("#mgPhoto") ? $("#mgPhoto").checked : true, keepLog = $("#mgLog") ? $("#mgLog").checked : true;
+    const d = readForm();
+    // 이름을 못 읽어 부서 칸에 이름이 붙어 들어온 경우 떼어 냄 (예: 홍길동영업1팀 → 영업1팀)
+    if (c.name && d.dept && d.dept.replace(/\s+/g, "").startsWith(c.name) && d.dept.replace(/\s+/g, "").length > c.name.length) {
+      d.dept = d.dept.replace(/\s+/g, "").slice(c.name.length).replace(/^[.\s·-]+/, ""); const f = $("#f_dept"); if (f) f.value = d.dept;
+    }
+    const diffs = MERGE_KEYS.filter(k => d[k] && normV(k, d[k]) !== normV(k, c[k])).map(k => ({ k, from: c[k] || "", to: d[k], sus: suspect(k, c[k] || "", d[k]) }));
+    box.innerHTML = `<div class="match">
+      <strong>${esc(c.name || c.company || "")}님 명함 업데이트</strong>
+      ${o.waiting && !diffs.length ? `<p class="help">명함을 읽고 나면 바뀐 내용을 여기에 보여 드립니다.</p>` : diffs.length ? `<p class="help">바꿀 항목을 확인하세요. 체크를 풀면 기존 값을 그대로 둡니다.</p>
+      <div class="changes">${diffs.map(x => `<label class="check chg"><input type="checkbox" data-mk="${x.k}" ${(x.k in keep ? keep[x.k] : !x.sus) ? "checked" : ""}><span><span class="sub">${LABEL[x.k]}</span> ${x.from ? `<s>${esc(x.from)}</s> → ` : ""}<span class="chg-new">${esc(x.to)}</span>${x.from ? "" : ` <span class="sub">(새 항목)</span>`}${x.sus ? `<br><span class="sub" style="font-size:12.5px">${x.sus}. 잘못 읽었을 수 있어 체크하지 않았습니다.</span>` : ""}</span></label>`).join("")}</div>` : `<p class="help">기존 명함과 다른 내용이 없습니다.</p>`}
+      ${pendingPhoto ? `<label class="check"><input type="checkbox" id="mgPhoto" ${keepPhoto ? "checked" : ""}> 명함 사진을 새 사진으로 바꾸기</label>` : ""}
+      ${diffs.length ? `<label class="check"><input type="checkbox" id="mgLog" ${keepLog ? "checked" : ""}> 바뀐 내용을 연락 기록에 남기기</label>` : ""}
+      <p class="help">메모·연락 기록·태그·다음 연락일은 그대로 둡니다.</p>
+      <div class="row"><button class="btn primary" data-act="mergeapply" type="button">업데이트</button><button class="btn ghost" data-act="mergesearch" type="button">다른 사람 선택</button><button class="btn ghost" data-act="mergenew" type="button">새 명함으로 등록</button></div>
+      <div class="status" id="mergeStatus"></div>
+    </div>`;
+    box.hidden = false;
+    if (!o.waiting) box.scrollIntoView({ block: "nearest" });
+  }
+  async function applyMerge() {
+    const mid = sheet.dataset.mergeId, c = state.cards.find(x => x.id === mid); if (!c) return;
+    const d = readForm(), st = $("#mergeStatus");
+    const picked = MERGE_KEYS.filter(k => { const x = $(`#matchBox input[data-mk="${k}"]`); return x && x.checked; });
+    const patch = {}, notes = [];
+    for (const k of picked) {
+      patch[k] = d[k];
+      if (["company", "dept", "title"].includes(k)) notes.push(`${LABEL[k]} ${c[k] ? c[k] + " → " : ""}${d[k]}`);
+      else notes.push(`${LABEL[k]} ${c[k] ? "변경" : "추가"}`);
+    }
+    // 새 명함 화면에 직접 적은 태그·메모·만남 정보도 잃지 않게 합침
+    const tags = [...new Set([...(c.tags || []), ...d.tags])]; if (tags.length !== (c.tags || []).length) patch.tags = tags;
+    if (d.memo && !String(c.memo || "").includes(d.memo)) patch.memo = c.memo ? c.memo + "\n" + d.memo : d.memo;
+    if (d.metAt && !c.metAt) patch.metAt = d.metAt;
+    if (d.metDate && !c.metDate) patch.metDate = d.metDate;
+    const usePhoto = pendingPhoto && $("#mgPhoto") && $("#mgPhoto").checked;
+    if (usePhoto) { patch.hasPhoto = true; patch.photoCut = !!(crop && crop.done); }
+    if (notes.length && $("#mgLog") && $("#mgLog").checked) patch.log = [...(c.log || []), { k: Date.now().toString(36), d: today(), t: "명함 업데이트: " + notes.join(", ") }];
+    if (!Object.keys(patch).length) { if (st) { st.className = "status"; st.textContent = "바꿀 내용이 없습니다. 그대로 두려면 닫기를 누르세요."; } return; }
+    if (st) { st.className = "status"; st.textContent = "업데이트하는 중…"; }
+    sheet.querySelectorAll("button").forEach(b => b.disabled = true);
+    try {
+      if (usePhoto) await store.photoSet(c.id, pendingPhoto.dataUrl);
+      const { id: _, ...rest } = c;
+      await store.save(c.id, { ...rest, ...patch, updatedAt: Date.now() });
+      if (state.mode === "db") Object.assign(c, patch, { updatedAt: Date.now() });
+      toast(`${c.name || c.company || "명함"}님 명함을 업데이트했습니다`);
+      render(); showDetail(c.id, patch.log ? { justUpdated: true } : { justAdded: false });
+    } catch (e) {
+      if (st) { st.className = "status err"; st.textContent = errText(e); }
+      sheet.querySelectorAll("button").forEach(b => b.disabled = false);
+    }
   }
 
   function findDup(mobile, email) {
@@ -1333,8 +1491,9 @@ body.locked #btnTidy{display:none}
     const st = $("#saveStatus");
     if (!data.name && !data.company) { st.className = "status err"; st.textContent = "이름이나 회사 중 하나는 적어 주세요."; $("#f_name").focus(); return; }
     if (!old && sheet.dataset.dupOk !== "1") {
-      const dup = findDup(data.mobile, data.email);
-      if (dup) { sheet.dataset.dupOk = "1"; st.className = "status err"; st.textContent = `이미 등록된 ${dup.name || dup.company}님과 휴대폰이나 이메일이 같습니다. 그래도 새로 저장하려면 저장을 한 번 더 누르세요.`; return; }
+      if (sheet.dataset.mergeId) { showDiff(sheet.dataset.mergeId); st.className = "status err"; st.textContent = "위에서 ‘업데이트’ 또는 ‘새 명함으로 등록’을 골라 주세요."; return; }
+      const ms = findMatches(data);
+      if (ms.length) { showMatches(ms); st.className = "status err"; st.textContent = "같은 사람이 이미 있는지 위에서 확인해 주세요."; return; }
     }
     const fromPhoto = !old && !!pendingPhoto;
     const id = id0 || store.newId();
@@ -1598,6 +1757,11 @@ body.locked #btnTidy{display:none}
       case "cropfull": return applyCrop(null);
       case "cropapply": return applyCrop(cropQ);
       case "cropcancel": return closeCropper();
+      case "mergepick": return showDiff(t.dataset.mid);
+      case "mergesearch": return showMergeSearch();
+      case "mergeclose": { const b = $("#matchBox"); if (b) { b.hidden = true; b.innerHTML = ""; } sheet.dataset.mergeId = ""; return; }
+      case "mergeapply": return applyMerge();
+      case "mergenew": { sheet.dataset.dupOk = "1"; sheet.dataset.mergeId = ""; const b = $("#matchBox"); if (b) { b.hidden = true; b.innerHTML = ""; } return saveEdit(); }
     }
     if (t.classList.contains("chip")) { state.tag = t.dataset.tag; render(); return; }
     if ((t.classList.contains("card") || t.classList.contains("due-row")) && t.dataset.id) return showDetail(t.dataset.id);

@@ -64,6 +64,7 @@
   function fmtPhone(raw) {
     let d = digitsOf(raw);
     if (d.startsWith("82") && d.length >= 10) d = "0" + d.slice(2);
+    if (/^00[2-9]/.test(d) && d.length >= 10) d = d.slice(1); // 0을 두 번 읽은 경우 (002 → 02)
     if (/^1[5689]\d{6}$/.test(d)) return d.slice(0, 4) + "-" + d.slice(4);
     if (d.startsWith("02")) {
       if (d.length === 9) return `02-${d.slice(2, 5)}-${d.slice(5)}`;
@@ -76,6 +77,7 @@
   }
   function validPhone(d) {
     if (d.startsWith("82")) d = "0" + d.slice(2);
+    if (/^00[2-9]/.test(d)) d = d.slice(1);
     return /^1[5689]\d{6}$/.test(d) || (/^0\d{8,11}$/.test(d));
   }
 
