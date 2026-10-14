@@ -199,6 +199,20 @@ label.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .gate-card code{font-family:var(--f-mono);font-size:13px;background:var(--bg);border-radius:4px;padding:1px 5px}
 body.locked .searchbar,body.locked .due,body.locked .list,body.locked #btnImport,body.locked #btnExport,body.locked #btnPick{display:none}
 .raw{margin-top:8px}
+body.locked #btnTidy{display:none}
+/* card cropper: four draggable corners over the original photo */
+.crop-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.crop-row .status{flex:1 1 100%}
+#dropInner{display:grid;gap:6px;justify-items:center}
+.cropper{position:relative;touch-action:none;user-select:none;-webkit-user-select:none;line-height:0;margin:14px auto;max-width:calc(100% - 28px)}
+.cropper canvas{width:100%;height:auto;display:block;border-radius:6px;background:#000}
+.cropper svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.cropper path{fill:rgba(0,0,0,.5)}
+.cropper polygon{fill:none;stroke:#55C2B2;stroke-width:2.5;vector-effect:non-scaling-stroke}
+.hdl{position:absolute;width:40px;height:40px;margin:-20px 0 0 -20px;border-radius:50%;cursor:grab;touch-action:none;display:grid;place-items:center}
+.hdl::after{content:"";width:20px;height:20px;border-radius:50%;border:3px solid #fff;background:rgba(15,107,98,.75);box-shadow:0 1px 4px rgba(0,0,0,.6)}
+.hdl:focus-visible{outline:2px solid #fff;outline-offset:-4px}
+.hdl[data-drag]::after{background:#55C2B2;transform:scale(1.15)}
 .raw summary{cursor:pointer;color:var(--muted);font-size:13.5px}
 .raw textarea{width:100%;margin-top:6px;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:9px 11px;font-size:14px;font-family:var(--f-mono)}
 .ico{width:17px;height:17px;flex:none}
@@ -219,6 +233,7 @@ body.locked .searchbar,body.locked .due,body.locked .list,body.locked #btnImport
     <div class="actions">
       <button class="btn ghost" id="btnImport" type="button">가져오기</button>
       <button class="btn ghost" id="btnExport" type="button">엑셀 받기</button>
+      <button class="btn ghost" id="btnTidy" type="button" hidden>사진 자르기</button>
       <button class="btn" id="btnInstall" type="button" hidden>앱 설치</button>
       <button class="btn ghost" id="btnAccount" type="button" hidden>계정</button>
       <button class="btn primary" id="btnPick" data-act="pick" type="button"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5h3l1.4-2h5.2l1.4 2h3v9.5H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="10" cy="11" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>명함 추가</button>
@@ -226,6 +241,7 @@ body.locked .searchbar,body.locked .due,body.locked .list,body.locked #btnImport
   </header>
 
   <div class="banner" id="banner" hidden></div>
+  <div class="drive-note" id="tidyNote" role="status" hidden></div>
   <div class="gate" id="gate" hidden></div>
 
   <div class="searchbar">
@@ -283,6 +299,7 @@ body.locked .searchbar,body.locked .due,body.locked .list,body.locked #btnImport
   const state = { cards: [], q: "", tag: "", sort: "company", mode: "loading", loaded: false };
   let db = null, uid = null, vault = null, cardsCol = null, photosCol = null, downloads = null, imageOK = true, installEvt = null;
   const local = { photos: {} };
+  let tidyBusy = false;
 
   // ---------- storage (Firebase Firestore, 오프라인에서도 동작) ----------
   // 쓰기는 기기 안 저장소에 바로 반영되고, 인터넷이 연결되면 클라우드로 올라갑니다.
@@ -354,6 +371,7 @@ body.locked .searchbar,body.locked .due,body.locked .list,body.locked #btnImport
   function render() {
     const n = state.cards.length;
     $("#count").textContent = !state.loaded ? "불러오는 중…" : `명함 ${n.toLocaleString("ko-KR")}장`;
+    if (!tidyBusy) $("#btnTidy").hidden = !state.cards.some(c => c.hasPhoto && !c.photoCut);
 
     const allTags = [...new Set(state.cards.flatMap(c => c.tags || []))].sort((a, b) => a.localeCompare(b, "ko"));
     if (state.tag && !allTags.includes(state.tag)) state.tag = "";
@@ -625,7 +643,7 @@ body.locked .searchbar,body.locked .due,body.locked .list,body.locked #btnImport
   function showEdit(id) {
     const c = id ? state.cards.find(x => x.id === id) : {};
     if (id && !c) return;
-    pendingPhoto = null;
+    pendingPhoto = null; crop = null;
     const v = k => esc(k === "tags" ? (c.tags || []).join(", ") : (c[k] || ""));
     const inp = (k, type = "text", full = false, extra = "") => `<div class="field ${full ? "full" : ""}"><label for="f_${k}">${LABEL[k]}</label><input id="f_${k}" type="${type}" value="${v(k)}" ${extra}></div>`;
     openSheet(`
@@ -633,9 +651,15 @@ body.locked .searchbar,body.locked .due,body.locked .list,body.locked #btnImport
       <label class="drop" id="drop" for="f_photo">
         <span id="dropInner">${id && c.hasPhoto ? "사진을 바꾸려면 눌러서 새 사진을 고르세요" : "명함 사진을 눌러서 고르거나 여기로 끌어다 놓으세요"}</span>
       </label>
+      <div id="cropBox" hidden></div>
       <div class="pick-row">
         <span class="btn primary file-btn"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5h3l1.4-2h5.2l1.4 2h3v9.5H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="10" cy="11" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>사진 촬영<input id="f_cam" type="file" accept="image/*" capture="environment" aria-label="사진 촬영"></span>
         <span class="btn file-btn"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="7.5" cy="8" r="1.4" fill="currentColor"/><path d="M4 15l4.2-4.2 3 3 2-2L17 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>앨범에서 선택<input id="f_photo" type="file" accept="image/*" aria-label="앨범에서 선택"></span>
+      </div>
+      <div class="crop-row" id="cropRow" ${id && c.hasPhoto ? "" : "hidden"}>
+        <span class="status" id="cropNote">${id && c.hasPhoto ? "저장된 사진에서 명함 부분만 잘라낼 수 있습니다." : ""}</span>
+        <button class="btn" data-act="cropopen" type="button">자르기 조정</button>
+        <button class="btn" data-act="croprot" type="button">90° 돌리기</button>
       </div>
       <div class="row" style="margin-top:10px">
         <button class="btn" id="btnRead" type="button" disabled>사진 다시 읽기</button>
@@ -670,39 +694,597 @@ body.locked .searchbar,body.locked .due,body.locked .list,body.locked #btnImport
     drop.addEventListener("drop", e => { e.preventDefault(); drop.style.borderColor = ""; const f = e.dataTransfer.files[0]; if (f) pickPhoto(f, { read: auto, autoSave: auto }); });
   }
 
-  async function compress(file) {
-    let src;
-    try { src = await createImageBitmap(file, { imageOrientation: "from-image" }); }
-    catch {
-      src = await new Promise((res, rej) => { const img = new Image(); const u = URL.createObjectURL(file); img.onload = () => { URL.revokeObjectURL(u); res(img); }; img.onerror = () => { URL.revokeObjectURL(u); rej(new Error("decode")); }; img.src = u; });
+  // ---------- card finder: locate the business card in a photo and straighten it ----------
+  const CardCrop = (() => {
+    const clampI = (v, a, b) => v < a ? a : v > b ? b : v;
+    function boxBlur(a, W, H, r) {
+      const t = new Float32Array(a.length), k = 2 * r + 1;
+      for (let y = 0; y < H; y++) {
+        const row = y * W; let s = 0;
+        for (let x = -r; x <= r; x++) s += a[row + clampI(x, 0, W - 1)];
+        for (let x = 0; x < W; x++) { t[row + x] = s / k; s += a[row + Math.min(W - 1, x + r + 1)] - a[row + Math.max(0, x - r)]; }
+      }
+      for (let x = 0; x < W; x++) {
+        let s = 0;
+        for (let y = -r; y <= r; y++) s += t[clampI(y, 0, H - 1) * W + x];
+        for (let y = 0; y < H; y++) { a[y * W + x] = s / k; s += t[Math.min(H - 1, y + r + 1) * W + x] - t[Math.max(0, y - r) * W + x]; }
+      }
     }
-    const w0 = src.width, h0 = src.height;
+    // binary morphology with a square window (separable)
+    function morph(m, W, H, r, dilate) {
+      const t = new Uint8Array(m.length), o = new Uint8Array(m.length), need = dilate ? 1 : 2 * r + 1;
+      const pass = (src, dst, len, stride, count, step) => {
+        for (let c = 0; c < count; c++) {
+          const base = c * step; let s = 0;
+          for (let i = -r; i <= r; i++) s += (i < 0 || i >= len) ? (dilate ? 0 : 1) : src[base + i * stride];
+          for (let i = 0; i < len; i++) {
+            dst[base + i * stride] = dilate ? (s >= 1 ? 1 : 0) : (s >= need ? 1 : 0);
+            const ia = i + r + 1, ir = i - r;
+            s += (ia >= len ? (dilate ? 0 : 1) : src[base + ia * stride]) - (ir < 0 ? (dilate ? 0 : 1) : src[base + ir * stride]);
+          }
+        }
+      };
+      pass(m, t, W, 1, H, W); pass(t, o, H, W, W, 1);
+      return o;
+    }
+    // flood from the image border through cells where pass[i]==1
+    function floodBorder(pass, W, H) {
+      const seen = new Uint8Array(W * H), st = new Int32Array(W * H); let n = 0;
+      const push = i => { if (pass[i] && !seen[i]) { seen[i] = 1; st[n++] = i; } };
+      for (let x = 0; x < W; x++) { push(x); push((H - 1) * W + x); }
+      for (let y = 0; y < H; y++) { push(y * W); push(y * W + W - 1); }
+      while (n) {
+        const i = st[--n], x = i % W;
+        if (x > 0) push(i - 1); if (x < W - 1) push(i + 1); if (i >= W) push(i - W); if (i < W * (H - 1)) push(i + W);
+      }
+      return seen;
+    }
+    function fillHoles(m, W, H) {
+      const inv = new Uint8Array(m.length); for (let i = 0; i < m.length; i++) inv[i] = m[i] ? 0 : 1;
+      const out = floodBorder(inv, W, H), r = new Uint8Array(m.length);
+      for (let i = 0; i < m.length; i++) r[i] = out[i] ? 0 : 1;
+      return r;
+    }
+    function largest(m, W, H) {
+      const lab = new Int32Array(m.length), st = new Int32Array(m.length); let best = 0, bestN = 0, cur = 0;
+      for (let s = 0; s < m.length; s++) {
+        if (!m[s] || lab[s]) continue;
+        cur++; let n = 0, cnt = 0; lab[s] = cur; st[n++] = s;
+        while (n) {
+          const i = st[--n], x = i % W; cnt++;
+          const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i >= W ? i - W : -1, i < W * (H - 1) ? i + W : -1];
+          for (const j of nb) if (j >= 0 && m[j] && !lab[j]) { lab[j] = cur; st[n++] = j; }
+        }
+        if (cnt > bestN) { bestN = cnt; best = cur; }
+      }
+      const o = new Uint8Array(m.length); if (best) for (let i = 0; i < m.length; i++) o[i] = lab[i] === best ? 1 : 0;
+      return o;
+    }
+    function otsu(vals, bins, max) {
+      const h = new Float64Array(bins); let tot = 0;
+      for (let i = 0; i < vals.length; i++) { h[Math.min(bins - 1, Math.floor(vals[i] / max * bins))]++; tot++; }
+      let sum = 0; for (let i = 0; i < bins; i++) sum += i * h[i];
+      let wB = 0, sB = 0, best = 0, th = 0;
+      for (let i = 0; i < bins; i++) {
+        wB += h[i]; if (!wB) continue; const wF = tot - wB; if (!wF) break;
+        sB += i * h[i]; const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) * (mB - mF);
+        if (v > best) { best = v; th = i; }
+      }
+      return (th + 1) / bins * max;
+    }
+    function pct(vals, max, p) {
+      const bins = 1024, h = new Float64Array(bins);
+      for (let i = 0; i < vals.length; i++) h[Math.min(bins - 1, Math.floor(vals[i] / max * bins))]++;
+      let acc = 0; const goal = p * vals.length;
+      for (let i = 0; i < bins; i++) { acc += h[i]; if (acc >= goal) return (i + 1) / bins * max; }
+      return max;
+    }
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    function hull(pts) {
+      pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      const lo = [], up = [];
+      for (const p of pts) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+      for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+      lo.pop(); up.pop(); return lo.concat(up);
+    }
+    const area = q => { let s = 0; for (let i = 0; i < q.length; i++) { const a = q[i], b = q[(i + 1) % q.length]; s += a[0] * b[1] - b[0] * a[1]; } return Math.abs(s) / 2; };
+    function rdp(pts, eps) {
+      if (pts.length < 3) return pts.slice();
+      const a = pts[0], b = pts[pts.length - 1], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
+      let md = -1, mi = 0;
+      for (let i = 1; i < pts.length - 1; i++) { const d = Math.abs(dy * (pts[i][0] - a[0]) - dx * (pts[i][1] - a[1])) / L; if (d > md) { md = d; mi = i; } }
+      if (md <= eps) return [a, b];
+      const l = rdp(pts.slice(0, mi + 1), eps), r = rdp(pts.slice(mi), eps);
+      return l.slice(0, -1).concat(r);
+    }
+    function simplify(h, maxN) {
+      if (h.length <= maxN) return h;
+      let far = 0, fd = -1; for (let i = 1; i < h.length; i++) { const d = Math.hypot(h[i][0] - h[0][0], h[i][1] - h[0][1]); if (d > fd) { fd = d; far = i; } }
+      let eps = 0.75, s = h;
+      while (s.length > maxN && eps < 200) {
+        const a = rdp(h.slice(0, far + 1), eps), b = rdp(h.slice(far).concat([h[0]]), eps);
+        s = a.slice(0, -1).concat(b.slice(0, -1)); eps *= 1.4;
+      }
+      return s;
+    }
+    function maxQuad(p) {
+      const n = p.length; if (n < 4) return null;
+      let best = 0, bq = null;
+      for (let a = 0; a < n - 3; a++) for (let b = a + 1; b < n - 2; b++) for (let c = b + 1; c < n - 1; c++) {
+        const abc = Math.abs(cross(p[a], p[b], p[c]));
+        for (let d = c + 1; d < n; d++) {
+          const s = (abc + Math.abs(cross(p[a], p[c], p[d]))) / 2;
+          if (s > best) { best = s; bq = [p[a], p[b], p[c], p[d]]; }
+        }
+      }
+      return bq;
+    }
+    function fitLine(pts) {
+      let mx = 0, my = 0; for (const p of pts) { mx += p[0]; my += p[1]; } mx /= pts.length; my /= pts.length;
+      let sxx = 0, syy = 0, sxy = 0; for (const p of pts) { const dx = p[0] - mx, dy = p[1] - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+      const th = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+      return { p: [mx, my], d: [Math.cos(th), Math.sin(th)] };
+    }
+    function meet(l1, l2) {
+      const den = l1.d[0] * l2.d[1] - l1.d[1] * l2.d[0]; if (Math.abs(den) < 1e-6) return null;
+      const t = ((l2.p[0] - l1.p[0]) * l2.d[1] - (l2.p[1] - l1.p[1]) * l2.d[0]) / den;
+      return [l1.p[0] + t * l1.d[0], l1.p[1] + t * l1.d[1]];
+    }
+    function order(q) {
+      const cx = q.reduce((s, p) => s + p[0], 0) / 4, cy = q.reduce((s, p) => s + p[1], 0) / 4;
+      const s = q.map(p => [p[0], p[1]]).sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
+      let k = 0; for (let i = 1; i < 4; i++) if (s[i][0] + s[i][1] < s[k][0] + s[k][1]) k = i;
+      return [s[k], s[(k + 1) % 4], s[(k + 2) % 4], s[(k + 3) % 4]];
+    }
+    function angleOK(q) {
+      let sign = 0;
+      for (let i = 0; i < 4; i++) {
+        const a = q[(i + 3) % 4], b = q[i], c = q[(i + 1) % 4];
+        const cr = cross(a, b, c); const sg = Math.sign(cr); if (!sg) return false;
+        if (sign && sg !== sign) return false; sign = sg;
+        const v1 = [a[0] - b[0], a[1] - b[1]], v2 = [c[0] - b[0], c[1] - b[1]];
+        const cos = (v1[0] * v2[0] + v1[1] * v2[1]) / (Math.hypot(...v1) * Math.hypot(...v2) || 1);
+        const deg = Math.acos(clampI(cos, -1, 1)) * 180 / Math.PI;
+        if (deg < 50 || deg > 130) return false;
+      }
+      return true;
+    }
+    function quadFromMask(m, W, H) {
+      let cnt = 0; for (let i = 0; i < m.length; i++) cnt += m[i];
+      if (cnt < 0.04 * W * H) return null;
+      const ext = [], bnd = [];
+      for (let y = 0; y < H; y++) {
+        let l = -1, r = -1;
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x; if (!m[i]) continue;
+          if (l < 0) l = x; r = x;
+          if (x === 0 || y === 0 || x === W - 1 || y === H - 1 || !m[i - 1] || !m[i + 1] || !m[i - W] || !m[i + W]) bnd.push([x + .5, y + .5]);
+        }
+        if (l >= 0) { ext.push([l, y], [l, y + 1], [r + 1, y], [r + 1, y + 1]); }
+      }
+      const h = hull(ext); if (h.length < 4) return null;
+      let q = maxQuad(simplify(h, 30)); if (!q) return null;
+      q = order(q);
+      // refine each side with a line fitted to the mask outline (fixes rounded corners)
+      const diag = Math.hypot(W, H), lines = [];
+      for (let k = 0; k < 4; k++) {
+        const a = q[k], b = q[(k + 1) % 4], dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len, uy = dy / len, tol = Math.max(2, 0.03 * len), sel = [];
+        for (const p of bnd) {
+          const px = p[0] - a[0], py = p[1] - a[1], t = (px * ux + py * uy) / len, d = Math.abs(px * uy - py * ux);
+          if (t > 0.1 && t < 0.9 && d < tol) sel.push(p);
+        }
+        lines.push(sel.length >= 8 ? fitLine(sel) : null);
+      }
+      const rq = q.map((c, k) => {
+        const l1 = lines[(k + 3) % 4], l2 = lines[k]; if (!l1 || !l2) return c;
+        const p = meet(l1, l2); return p && Math.hypot(p[0] - c[0], p[1] - c[1]) < 0.08 * diag ? p : c;
+      });
+      return { quad: angleOK(rq) ? rq : q, cnt };
+    }
+    // move each side onto the sharpest parallel edge nearby (card paper edge beats a soft shadow)
+    function snap(q, M, W, H, tEdge) {
+      const lines = [];
+      for (let k = 0; k < 4; k++) {
+        const a = q[k], b = q[(k + 1) % 4], dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
+        const R = Math.max(3, 0.06 * len), pts = [];
+        for (let s = 0; s < 48; s++) {
+          const t = 0.1 + 0.8 * s / 47, px = a[0] + dx * t, py = a[1] + dy * t;
+          const prof = [];
+          for (let o = -R; o <= R; o += 0.5) {
+            const xi = Math.round(px + nx * o), yi = Math.round(py + ny * o);
+            prof.push([o, (xi < 1 || yi < 1 || xi > W - 2 || yi > H - 2) ? 0 : M[yi * W + xi]]);
+          }
+          let bm = 0; for (const p of prof) bm = Math.max(bm, p[1]);
+          const need = Math.max(tEdge * 0.8, bm * 0.5);
+          let bo = null;
+          for (let i = 0; i < prof.length; i++) {
+            const v = prof[i][1]; if (v < need) continue;
+            if ((i && prof[i - 1][1] > v) || (i < prof.length - 1 && prof[i + 1][1] > v)) continue; // local peaks only
+            if (bo === null || Math.abs(prof[i][0]) < Math.abs(bo)) bo = prof[i][0];
+          }
+          if (bo !== null) pts.push([px + nx * bo, py + ny * bo]);
+        }
+        if (pts.length < 14) { lines.push(null); continue; }
+        let l = fitLine(pts);
+        for (let it = 0; it < 2; it++) {
+          const keep = pts.filter(p => Math.abs((p[0] - l.p[0]) * l.d[1] - (p[1] - l.p[1]) * l.d[0]) < 1.5);
+          if (keep.length < 12) break; l = fitLine(keep);
+        }
+        lines.push(l);
+      }
+      const diag = Math.hypot(W, H);
+      const r = q.map((c, k) => {
+        const l1 = lines[(k + 3) % 4], l2 = lines[k]; if (!l1 || !l2) return c;
+        const p = meet(l1, l2); return p && Math.hypot(p[0] - c[0], p[1] - c[1]) < 0.06 * diag ? p : c;
+      });
+      return angleOK(r) ? r : q;
+    }
+    function inQuad(q, x, y) {
+      let s = 0;
+      for (let i = 0; i < 4; i++) { const c = cross(q[i], q[(i + 1) % 4], [x, y]); if (c) { const g = Math.sign(c); if (s && g !== s) return false; s = g; } }
+      return true;
+    }
+    function judge(c, m, M, W, H, tEdge) {
+      const q = c.quad; if (!angleOK(q)) return null;
+      const qa = area(q), frac = qa / (W * H); if (frac < 0.06) return null;
+      let inter = 0, qn = 0, mn = 0;
+      let x0 = W, x1 = 0, y0 = H, y1 = 0; for (const p of q) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const mi = m[y * W + x]; mn += mi;
+        if (x + .5 < x0 || x + .5 > x1 || y + .5 < y0 || y + .5 > y1) continue;
+        if (inQuad(q, x + .5, y + .5)) { qn++; inter += mi; }
+      }
+      const iou = inter / (qn + mn - inter || 1);
+      let hit = 0, tot = 0;
+      for (let k = 0; k < 4; k++) {
+        const a = q[k], b = q[(k + 1) % 4], dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
+        for (let s = 0; s < 32; s++) {
+          const t = 0.08 + 0.84 * s / 31, px = a[0] + dx * t, py = a[1] + dy * t;
+          let onImgEdge = px < 2 || py < 2 || px > W - 3 || py > H - 3; if (onImgEdge) continue;
+          tot++; let mx = 0;
+          for (let o = -2.5; o <= 2.5; o += 1) { const xi = Math.round(px + nx * o), yi = Math.round(py + ny * o); if (xi >= 0 && yi >= 0 && xi < W && yi < H) mx = Math.max(mx, M[yi * W + xi]); }
+          if (mx >= tEdge) hit++;
+        }
+      }
+      const edge = tot ? hit / tot : 0;
+      let score = iou * (0.35 + 0.65 * edge);
+      if (frac > 0.94) score *= 0.6;
+      const confident = ((iou > 0.84 && edge > 0.8) || (iou > 0.92 && edge > 0.65)) && frac >= 0.07 && frac <= 0.96;
+      return { quad: q, score, confident, iou, edge, frac };
+    }
+    // px: RGBA bytes of a small working image (≈420px)
+    function analyze(px, W, H) {
+      const N = W * H, L = new Float32Array(N), A = new Float32Array(N), B = new Float32Array(N);
+      for (let i = 0, j = 0; i < N; i++, j += 4) { const r = px[j], g = px[j + 1], b = px[j + 2]; L[i] = 0.299 * r + 0.587 * g + 0.114 * b; A[i] = r - g; B[i] = (r + g) / 2 - b; }
+      for (let k = 0; k < 2; k++) { boxBlur(L, W, H, 1); boxBlur(A, W, H, 1); boxBlur(B, W, H, 1); }
+      const M = new Float32Array(N); let maxM = 1e-6;
+      for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x; let s = 0;
+        for (const [ch, w] of [[L, 1], [A, 0.6], [B, 0.6]]) {
+          const gx = ch[i - W + 1] + 2 * ch[i + 1] + ch[i + W + 1] - ch[i - W - 1] - 2 * ch[i - 1] - ch[i + W - 1];
+          const gy = ch[i + W - 1] + 2 * ch[i + W] + ch[i + W + 1] - ch[i - W - 1] - 2 * ch[i - W] - ch[i - W + 1];
+          s += w * (gx * gx + gy * gy);
+        }
+        M[i] = Math.sqrt(s); if (M[i] > maxM) maxM = M[i];
+      }
+      const tEdge = Math.max(pct(M, maxM, 0.8), otsu(M, 256, maxM) * 0.5);
+      const masks = [];
+      // 1) outline: background is whatever the border can reach without crossing a strong edge
+      for (const p of [0.78, 0.86, 0.92]) {
+        const t = pct(M, maxM, p), e = new Uint8Array(N);
+        for (let i = 0; i < N; i++) e[i] = M[i] >= t ? 1 : 0;
+        const ed = morph(e, W, H, 1, true), open = new Uint8Array(N); for (let i = 0; i < N; i++) open[i] = ed[i] ? 0 : 1;
+        const bg = floodBorder(open, W, H), m = new Uint8Array(N); for (let i = 0; i < N; i++) m[i] = bg[i] ? 0 : 1;
+        masks.push(largest(morph(morph(m, W, H, 1, false), W, H, 1, true), W, H));
+      }
+      // 2) colour: how different each pixel is from the colours along the photo border
+      {
+        const bw = Math.max(2, Math.round(0.03 * Math.min(W, H))), samp = [];
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if ((x < bw || y < bw || x >= W - bw || y >= H - bw) && ((x + y) & 1) === 0) samp.push(y * W + x);
+        const K = 4, cen = []; for (let k = 0; k < K; k++) { const i = samp[Math.floor((k + .5) / K * samp.length)]; cen.push([L[i], A[i], B[i]]); }
+        for (let it = 0; it < 8; it++) {
+          const acc = cen.map(() => [0, 0, 0, 0]);
+          for (const i of samp) { let bk = 0, bd = 1e18; for (let k = 0; k < K; k++) { const d = (L[i] - cen[k][0]) ** 2 + (A[i] - cen[k][1]) ** 2 + (B[i] - cen[k][2]) ** 2; if (d < bd) { bd = d; bk = k; } } const a = acc[bk]; a[0] += L[i]; a[1] += A[i]; a[2] += B[i]; a[3]++; }
+          acc.forEach((a, k) => { if (a[3]) cen[k] = [a[0] / a[3], a[1] / a[3], a[2] / a[3]]; });
+        }
+        const D = new Float32Array(N); let maxD = 1e-6;
+        for (let i = 0; i < N; i++) { let bd = 1e18; for (const c of cen) { const d = (L[i] - c[0]) ** 2 + (A[i] - c[1]) ** 2 + (B[i] - c[2]) ** 2; if (d < bd) bd = d; } D[i] = Math.sqrt(bd); if (D[i] > maxD) maxD = D[i]; }
+        const t = Math.max(otsu(D, 256, maxD), 18), m = new Uint8Array(N);
+        for (let i = 0; i < N; i++) m[i] = D[i] > t ? 1 : 0;
+        masks.push(fillHoles(largest(morph(morph(m, W, H, 2, true), W, H, 2, false), W, H), W, H));
+      }
+      // 3) brightness: light card on darker surface (or the reverse)
+      {
+        const t = otsu(L, 256, 256);
+        for (const bright of [true, false]) {
+          const m = new Uint8Array(N); for (let i = 0; i < N; i++) m[i] = (L[i] > t) === bright ? 1 : 0;
+          masks.push(fillHoles(largest(morph(morph(m, W, H, 1, false), W, H, 1, true), W, H), W, H));
+        }
+      }
+      let best = null;
+      for (const m of masks) {
+        const c = quadFromMask(m, W, H); if (!c) continue;
+        c.quad = snap(c.quad, M, W, H, tEdge);
+        const j = judge(c, m, M, W, H, tEdge); if (j && (!best || j.score > best.score)) best = j;
+      }
+      return best;
+    }
+    // Heckbert: unit square -> quad (TL, TR, BR, BL)
+    function sq2quad(q) {
+      const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = q, sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3;
+      if (Math.abs(sx) < 1e-9 && Math.abs(sy) < 1e-9) return [x1 - x0, x3 - x0, x0, y1 - y0, y3 - y0, y0, 0, 0];
+      const dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2, den = dx1 * dy2 - dx2 * dy1;
+      const g = (sx * dy2 - dx2 * sy) / den, h = (dx1 * sy - sx * dy1) / den;
+      return [x1 - x0 + g * x1, x3 - x0 + h * x3, x0, y1 - y0 + g * y1, y3 - y0 + h * y3, y0, g, h];
+    }
+    // real-world width/height of a rectangle seen in perspective (Zhang & He, whiteboard scanning)
+    function aspect(q, cx, cy) {
+      const P = p => [p[0] - cx, p[1] - cy, 1];
+      const m1 = P(q[0]), m2 = P(q[1]), m3 = P(q[3]), m4 = P(q[2]);
+      const X = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+      const D = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const c14 = X(m1, m4), d2 = D(X(m2, m4), m3), d3 = D(X(m3, m4), m2);
+      if (!d2 || !d3) return 0;
+      const k2 = D(c14, m3) / d2, k3 = D(c14, m2) / d3;
+      const n2 = m2.map((v, i) => k2 * v - m1[i]), n3 = m3.map((v, i) => k3 * v - m1[i]);
+      let f2 = -(n2[0] * n3[0] + n2[1] * n3[1]) / (n2[2] * n3[2]);
+      // keep a believable phone-camera focal length; when the angle can't pin it down, assume a typical one
+      const diag2 = 4 * (cx * cx + cy * cy);
+      if (!isFinite(f2) || f2 < 0.16 * diag2 || f2 > 4 * diag2) f2 = 0.5 * diag2;
+      const r = Math.sqrt((n2[0] ** 2 + n2[1] ** 2 + f2 * n2[2] ** 2) / (n3[0] ** 2 + n3[1] ** 2 + f2 * n3[2] ** 2));
+      return isFinite(r) && r > 0.2 && r < 5 ? r : 0;
+    }
+    // straighten: src RGBA (sw×sh), quad in src pixels (TL,TR,BR,BL) -> {data,w,h}
+    function warp(src, sw, sh, quad, maxLong) {
+      const d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+      let w = Math.max(d(quad[0], quad[1]), d(quad[3], quad[2])), h = Math.max(d(quad[0], quad[3]), d(quad[1], quad[2]));
+      const ar = aspect(quad, sw / 2, sh / 2); // true width/height, undoing the camera angle
+      if (ar) { if (w / h > ar) h = w / ar; else w = h * ar; }
+      const r = Math.max(w, h) / Math.min(w, h);
+      if (r > 1.62 && r < 2.0) { if (w >= h) h = w / 1.8; else w = h / 1.8; } // 90×50mm standard card
+      const s = Math.min(1, maxLong / Math.max(w, h)); w = Math.max(8, Math.round(w * s)); h = Math.max(8, Math.round(h * s));
+      const [a, b, c, dd, e, f, g, hh] = sq2quad(quad), out = new Uint8ClampedArray(w * h * 4), ins = 0.004;
+      for (let y = 0; y < h; y++) {
+        const v = ins + (1 - 2 * ins) * (y + .5) / h;
+        for (let x = 0; x < w; x++) {
+          const u = ins + (1 - 2 * ins) * (x + .5) / w, z = g * u + hh * v + 1;
+          let X = (a * u + b * v + c) / z - .5, Y = (dd * u + e * v + f) / z - .5;
+          X = clampI(X, 0, sw - 1.001); Y = clampI(Y, 0, sh - 1.001);
+          const xi = X | 0, yi = Y | 0, fx = X - xi, fy = Y - yi, i0 = (yi * sw + xi) * 4, i1 = i0 + sw * 4, o = (y * w + x) * 4;
+          for (let k = 0; k < 3; k++) out[o + k] = (src[i0 + k] * (1 - fx) + src[i0 + 4 + k] * fx) * (1 - fy) + (src[i1 + k] * (1 - fx) + src[i1 + 4 + k] * fx) * fy;
+          out[o + 3] = 255;
+        }
+      }
+      return { data: out, w, h };
+    }
+    return { analyze, warp, order };
+  })();
+
+  // ---------- photo: find the card, cut it out and straighten it ----------
+  let crop = null; // { base: canvas, quad: auto-found corners|null, sure, applied: corners|null, rot: 0-3, done }
+  let cropQ = null;
+  async function loadCanvas(src) { // File/Blob or data URL -> canvas (long side ≤ 2400)
+    let img;
+    const viaImg = u => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("decode")); i.src = u; });
+    if (typeof src === "string") img = await viaImg(src);
+    else {
+      try { img = await createImageBitmap(src, { imageOrientation: "from-image" }); }
+      catch { const u = URL.createObjectURL(src); try { img = await viaImg(u); } finally { URL.revokeObjectURL(u); } }
+    }
+    const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
+    const s = Math.min(1, 2400 / Math.max(w0, h0));
+    const cv = document.createElement("canvas"); cv.width = Math.max(1, Math.round(w0 * s)); cv.height = Math.max(1, Math.round(h0 * s));
+    cv.getContext("2d", { willReadFrequently: true }).drawImage(img, 0, 0, cv.width, cv.height);
+    if (img.close) img.close();
+    return cv;
+  }
+  function findCard(cv) {
+    const s = Math.min(1, 420 / Math.max(cv.width, cv.height)), w = Math.max(1, Math.round(cv.width * s)), h = Math.max(1, Math.round(cv.height * s));
+    const t = document.createElement("canvas"); t.width = w; t.height = h;
+    const x = t.getContext("2d", { willReadFrequently: true }); x.drawImage(cv, 0, 0, w, h);
+    let r = null; try { r = CardCrop.analyze(x.getImageData(0, 0, w, h).data, w, h); } catch { r = null; }
+    if (!r) return null;
+    const kx = cv.width / w, ky = cv.height / h;
+    return { quad: r.quad.map(p => [p[0] * kx, p[1] * ky]), confident: r.confident };
+  }
+  const insetQuad = cv => { const mx = cv.width * .1, my = cv.height * .1; return [[mx, my], [cv.width - mx, my], [cv.width - mx, cv.height - my], [mx, cv.height - my]]; };
+  function renderCrop() {
+    const b = crop.base, q = crop.applied, r = crop.rot;
+    if (q) {
+      const qq = q.map((_, i) => q[(i - r + 4) % 4]);
+      const src = b.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, b.width, b.height);
+      const o = CardCrop.warp(src.data, b.width, b.height, qq, 1600);
+      const out = document.createElement("canvas"); out.width = o.w; out.height = o.h;
+      out.getContext("2d").putImageData(new ImageData(o.data, o.w, o.h), 0, 0);
+      return out;
+    }
+    if (!r) return b;
+    const odd = r % 2, out = document.createElement("canvas");
+    out.width = odd ? b.height : b.width; out.height = odd ? b.width : b.height;
+    const x = out.getContext("2d"); x.translate(out.width / 2, out.height / 2); x.rotate(r * Math.PI / 2); x.drawImage(b, -b.width / 2, -b.height / 2);
+    return out;
+  }
+  async function encode(cv) { // small copy to store, sharper copy for Claude to read
+    const w0 = cv.width, h0 = cv.height;
     const make = (max, q) => {
       const s = Math.min(1, max / Math.max(w0, h0));
-      const cv = document.createElement("canvas"); cv.width = Math.round(w0 * s); cv.height = Math.round(h0 * s);
-      cv.getContext("2d").drawImage(src, 0, 0, cv.width, cv.height);
-      return { cv, url: cv.toDataURL("image/jpeg", q) };
+      const c = document.createElement("canvas"); c.width = Math.round(w0 * s); c.height = Math.round(h0 * s);
+      const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); x.drawImage(cv, 0, 0, c.width, c.height);
+      return { cv: c, url: c.toDataURL("image/jpeg", q) };
     };
-    let r = make(1200, .8);
-    if (r.url.length > 230000) r = make(1000, .68);
+    let r = make(1200, .82);
+    if (r.url.length > 230000) r = make(1000, .7);
     if (r.url.length > 230000) r = make(800, .6);
     const ai = make(1600, .88);
     const blob = await new Promise(res => ai.cv.toBlob(res, "image/jpeg", .88));
     return { dataUrl: r.url, blob };
   }
+  async function cropFrom(src) {
+    const base = await loadCanvas(src);
+    await new Promise(r => setTimeout(r, 0));
+    const f = findCard(base);
+    return { base, quad: f ? f.quad : null, sure: !!(f && f.confident), applied: f && f.confident ? f.quad : null, rot: 0, done: !!(f && f.confident) };
+  }
+
+  function showPending() {
+    const di = $("#dropInner"); if (!di || !pendingPhoto) return;
+    di.innerHTML = `<img alt="고른 명함 사진" src="${pendingPhoto.dataUrl}"><span style="font-size:13px">다른 사진으로 바꾸려면 누르세요</span>`;
+    const row = $("#cropRow"), note = $("#cropNote");
+    if (row) row.hidden = false;
+    if (note) { note.className = "status" + (crop && crop.applied ? " ok" : ""); note.textContent = crop && crop.applied ? "명함 부분만 잘라 반듯하게 폈습니다." : "사진 전체를 그대로 씁니다."; }
+  }
 
   async function pickPhoto(file, opt = {}) {
     const st = $("#readStatus");
+    if (st) { st.className = "status"; st.textContent = "사진에서 명함을 찾는 중…"; }
     try {
-      const p = await compress(file);
+      const cr = await cropFrom(file);
       if (!$("#drop")) return;
-      pendingPhoto = p;
-      $("#dropInner").innerHTML = `<img alt="고른 명함 사진" src="${p.dataUrl}"><span style="font-size:13px">다른 사진으로 바꾸려면 누르세요</span>`;
+      crop = cr;
+      pendingPhoto = await encode(renderCrop());
+      showPending();
       const b = $("#btnRead"); if (b) b.disabled = !imageOK;
+      if (!crop.sure) {
+        // edges unclear: let the user set the corners first, then read the straightened card
+        crop.readAfter = !!(opt.read && imageOK);
+        openCropper();
+        if (st) { st.className = "status"; st.textContent = crop.readAfter ? "모서리를 맞추고 ‘적용’을 누르면 글자를 읽습니다." : "‘사진 다시 읽기’를 누르면 명함을 읽습니다."; }
+        return;
+      }
       if (imageOK && st) { st.className = "status"; st.textContent = "‘사진 다시 읽기’를 누르면 명함을 읽습니다."; }
       if (opt.read && imageOK) readCard(opt);
       else if (opt.read && st) { st.className = "status"; st.textContent = "사진을 붙였습니다. 이 화면에서는 자동 인식을 쓸 수 없어 직접 입력해 주세요."; }
     } catch { if (st) { st.className = "status err"; st.textContent = "이 사진을 열 수 없습니다. JPG나 PNG 사진으로 다시 골라 주세요."; } }
+  }
+
+  async function ensureCrop() { // editing a saved card: start from its stored photo
+    if (crop) return true;
+    const id = sheet.dataset.id, c = id && state.cards.find(x => x.id === id);
+    if (!c || !c.hasPhoto) return false;
+    const note = $("#cropNote"); if (note) { note.className = "status"; note.textContent = "저장된 사진을 불러오는 중…"; }
+    try {
+      const src = await store.photoGet(id); if (!src) throw new Error("none");
+      const cr = await cropFrom(src); if (!$("#cropRow")) return false;
+      crop = { ...cr, applied: null, done: false };
+      if (note) note.textContent = "";
+      return true;
+    } catch { if (note) { note.className = "status err"; note.textContent = "저장된 사진을 불러오지 못했습니다."; } return false; }
+  }
+
+  function openCropper() {
+    const box = $("#cropBox"); if (!box || !crop) return;
+    const b = crop.base;
+    cropQ = (crop.applied || crop.quad || insetQuad(b)).map(p => [p[0], p[1]]);
+    const names = ["왼쪽 위", "오른쪽 위", "오른쪽 아래", "왼쪽 아래"];
+    box.innerHTML = `
+      <p class="help" style="margin:0 0 8px">${crop.sure ? "초록 테두리가 명함 가장자리에 맞는지 확인하고, 어긋났으면 동그라미를 끌어 맞추세요." : "명함 테두리를 확실히 찾지 못했습니다. 네 모서리의 동그라미를 명함 귀퉁이로 끌어 맞춘 뒤 ‘적용’을 누르세요."}</p>
+      <div class="cropper" id="cropper"><canvas id="cropCv"></canvas>
+        <svg viewBox="0 0 ${b.width} ${b.height}" preserveAspectRatio="none" aria-hidden="true"><path id="cropShade" fill-rule="evenodd"/><polygon id="cropPoly"/></svg>
+        ${names.map((n, i) => `<span class="hdl" data-h="${i}" tabindex="0" role="slider" aria-label="${n} 모서리 (화살표 키로 이동)"></span>`).join("")}
+      </div>
+      <div class="crop-row">
+        <button class="btn" data-act="cropauto" type="button" ${crop.quad ? "" : "disabled"}>자동으로 찾기</button>
+        <button class="btn" data-act="cropfull" type="button">자르지 않기</button>
+      </div>
+      <div class="crop-row" style="justify-content:flex-end">
+        <button class="btn ghost" data-act="cropcancel" type="button">취소</button>
+        <button class="btn primary" data-act="cropapply" type="button">적용</button>
+      </div>
+      <div class="status" id="cropErr"></div>`;
+    box.hidden = false; $("#drop").hidden = true; const row = $("#cropRow"); if (row) row.hidden = true;
+    const cv = $("#cropCv"), s = Math.min(1, 1100 / Math.max(b.width, b.height));
+    cv.width = Math.round(b.width * s); cv.height = Math.round(b.height * s);
+    cv.getContext("2d").drawImage(b, 0, 0, cv.width, cv.height);
+    // keep tall photos from overflowing the phone screen
+    $("#cropper").style.width = `min(calc(100% - 28px), ${Math.round(58 * b.width / b.height)}vh)`;
+    drawCrop();
+    const area = $("#cropper");
+    area.querySelectorAll(".hdl").forEach(h => {
+      const i = +h.dataset.h;
+      const move = e => {
+        const r = area.getBoundingClientRect();
+        cropQ[i] = [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * b.width, Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) * b.height];
+        drawCrop();
+      };
+      h.addEventListener("pointerdown", e => { e.preventDefault(); h.setPointerCapture(e.pointerId); h.dataset.drag = "1"; });
+      h.addEventListener("pointermove", e => { if (h.dataset.drag) move(e); });
+      const end = () => { delete h.dataset.drag; };
+      h.addEventListener("pointerup", end); h.addEventListener("pointercancel", end);
+      h.addEventListener("keydown", e => {
+        const k = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key]; if (!k) return;
+        e.preventDefault(); const st = (e.shiftKey ? 0.04 : 0.008) * Math.max(b.width, b.height);
+        cropQ[i] = [Math.min(b.width, Math.max(0, cropQ[i][0] + k[0] * st)), Math.min(b.height, Math.max(0, cropQ[i][1] + k[1] * st))];
+        drawCrop();
+      });
+    });
+    box.scrollIntoView({ block: "nearest" });
+  }
+  function drawCrop() {
+    const b = crop.base, poly = $("#cropPoly"); if (!poly) return;
+    poly.setAttribute("points", cropQ.map(p => p.join(",")).join(" "));
+    $("#cropShade").setAttribute("d", `M0 0H${b.width}V${b.height}H0Z M${cropQ.map(p => p.join(" ")).join(" L")}Z`);
+    sheet.querySelectorAll(".hdl").forEach(h => { const p = cropQ[+h.dataset.h]; h.style.left = p[0] / b.width * 100 + "%"; h.style.top = p[1] / b.height * 100 + "%"; });
+  }
+  function closeCropper() {
+    const box = $("#cropBox"); if (!box) return;
+    box.hidden = true; box.innerHTML = ""; $("#drop").hidden = false;
+    const id = sheet.dataset.id, c = id && state.cards.find(x => x.id === id);
+    const row = $("#cropRow"); if (row) row.hidden = !(pendingPhoto || (c && c.hasPhoto));
+    if (crop && crop.readAfter && pendingPhoto) { crop.readAfter = false; readCard(); }
+  }
+  async function applyCrop(q) {
+    let oq = null;
+    if (q) {
+      oq = CardCrop.order(q);
+      let a = 0; for (let i = 0; i < 4; i++) { const p = oq[i], n = oq[(i + 1) % 4]; a += p[0] * n[1] - n[0] * p[1]; }
+      if (Math.abs(a) / 2 < 0.01 * crop.base.width * crop.base.height) { const e = $("#cropErr"); if (e) { e.className = "status err"; e.textContent = "영역이 너무 작습니다. 모서리를 명함 귀퉁이에 맞춰 주세요."; } return; }
+    }
+    crop.applied = oq; crop.done = true;
+    const waiting = crop.readAfter; crop.readAfter = false;
+    closeCropper();
+    pendingPhoto = await encode(renderCrop());
+    showPending();
+    if (waiting) return readCard();
+    const b = $("#btnRead"); if (b) b.disabled = !imageOK;
+    const st = $("#readStatus"); if (st && imageOK) { st.className = "status"; st.textContent = "사진을 바꿨습니다. ‘사진 다시 읽기’를 누르면 잘라낸 사진으로 다시 읽습니다."; }
+  }
+  async function rotateCrop() {
+    if (!await ensureCrop()) return;
+    crop.rot = (crop.rot + 1) % 4; crop.done = true;
+    pendingPhoto = await encode(renderCrop());
+    showPending();
+  }
+
+  // ---------- tidy: cut out cards in photos saved before auto-crop ----------
+  async function tidyPhotos() {
+    if (tidyBusy) return;
+    const list = state.cards.filter(c => c.hasPhoto && !c.photoCut);
+    if (!list.length) return;
+    tidyBusy = true;
+    const btn = $("#btnTidy"), note = $("#tidyNote");
+    btn.disabled = true; note.hidden = false; note.classList.remove("err");
+    let cut = 0, left = 0, fail = 0;
+    const keep = crop;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      note.textContent = `명함 사진 정리 중… ${i + 1} / ${list.length}`;
+      try {
+        const src = await store.photoGet(c.id); if (!src) { fail++; continue; }
+        crop = await cropFrom(src);
+        let flag = "manual";
+        if (crop.applied) { const p = await encode(renderCrop()); await store.photoSet(c.id, p.dataUrl); flag = true; cut++; }
+        else left++;
+        const cur = state.cards.find(x => x.id === c.id) || c;
+        const { id: _, ...rest } = cur;
+        await store.save(c.id, { ...rest, photoCut: flag });
+        if (state.mode === "db") cur.photoCut = flag;
+      } catch { fail++; }
+    }
+    crop = keep;
+    tidyBusy = false; btn.disabled = false; render();
+    note.innerHTML = `<span>사진 ${cut}장에서 명함 부분만 잘라냈습니다.${left ? ` ${left}장은 테두리를 확실히 찾지 못해 그대로 두었습니다. 해당 명함의 ‘수정 → 자르기 조정’에서 직접 맞출 수 있어요.` : ""}${fail ? ` ${fail}장은 불러오지 못했습니다.` : ""}</span><button class="btn ghost" type="button" data-act="tidyok">닫기</button>`;
+    if (fail && !cut) note.classList.add("err");
   }
 
   let readCtl = null, readSeq = 0;
@@ -758,6 +1340,7 @@ body.locked .searchbar,body.locked .due,body.locked .list,body.locked #btnImport
     const id = id0 || store.newId();
     const base = old ? (({ id: _, ...r }) => r)(old) : { createdAt: Date.now(), log: [], nextContact: "" };
     const next = { ...base, ...data, hasPhoto: !!(pendingPhoto || (old && old.hasPhoto)), updatedAt: Date.now() };
+    if (pendingPhoto) next.photoCut = !!(crop && crop.done);
     st.className = "status"; st.textContent = "저장하는 중…";
     sheet.querySelectorAll("button").forEach(b => b.disabled = true);
     try {
@@ -1006,6 +1589,16 @@ body.locked .searchbar,body.locked .due,body.locked .list,body.locked #btnImport
     if (t.id === "btnAdd" || t.dataset.act === "add") return showEdit(null);
     if (t.id === "btnImport" || t.dataset.act === "import") return showImport();
     if (t.id === "btnExport") return doExport();
+    if (t.id === "btnTidy") return tidyPhotos();
+    if (t.dataset.act === "tidyok") { $("#tidyNote").hidden = true; return; }
+    switch (t.dataset.act) {
+      case "cropopen": if (await ensureCrop()) openCropper(); return;
+      case "croprot": return rotateCrop();
+      case "cropauto": if (crop && crop.quad) { cropQ = crop.quad.map(p => [p[0], p[1]]); drawCrop(); } return;
+      case "cropfull": return applyCrop(null);
+      case "cropapply": return applyCrop(cropQ);
+      case "cropcancel": return closeCropper();
+    }
     if (t.classList.contains("chip")) { state.tag = t.dataset.tag; render(); return; }
     if ((t.classList.contains("card") || t.classList.contains("due-row")) && t.dataset.id) return showDetail(t.dataset.id);
     if (t.dataset.copy != null) return copy(t.dataset.copy, t);
