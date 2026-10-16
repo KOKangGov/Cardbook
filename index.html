@@ -375,6 +375,48 @@ body.locked #btnTidy{display:none}
     newId() { return cardsCol ? cardsCol.doc().id : "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
   };
 
+  // ---------- 전화번호 자동 하이픈 ----------
+  // 010-1234-5678 · 02-123-4567 · 02-1234-5678 · 042-123-4567 · 070-1234-5678 · 0505-123-4567 · 1588-1234
+  // 숫자·하이픈·공백·괄호·점 말고 다른 글자(+82, 내선 등)가 있으면 손대지 않습니다.
+  const TEL_KEYS = ["mobile", "phone", "fax"];
+  function fmtTel(v) {
+    const s = String(v ?? "");
+    if (!/^[\d\s\-.()]*$/.test(s)) return s;
+    const d = s.replace(/\D/g, "");
+    if (!d) return s.trim() ? s : "";
+    if (/^1[5-9]/.test(d) && d.length <= 8) return d.length > 4 ? d.slice(0, 4) + "-" + d.slice(4) : d;
+    if (d[0] !== "0" || d.length > 12) return d;
+    const a = d.startsWith("02") ? 2 : /^050[2-8]/.test(d) ? 4 : 3;
+    if (d.length <= a) return d;
+    const r = d.slice(a);
+    if (r.length <= 3) return d.slice(0, a) + "-" + r;
+    if (r.length <= 7) return d.slice(0, a) + "-" + r.slice(0, 3) + "-" + r.slice(3);
+    return d.slice(0, a) + "-" + r.slice(0, 4) + "-" + r.slice(4);
+  }
+  // 입력하는 동안 하이픈을 넣고, 커서는 같은 숫자 뒤에 그대로 둡니다.
+  document.addEventListener("input", e => {
+    const el = e.target;
+    if (!el.matches || !el.matches("#f_mobile,#f_phone,#f_fax,#shTo")) return;
+    // 숫자가 아닌 글자(띄어쓰기, +, 한글 등)를 칠 때는 그대로 둡니다.
+    if (e.isComposing || (e.data && /\D/.test(e.data))) { el.dataset.prev = el.value; return; }
+    let v = el.value, pos = el.selectionStart ?? v.length;
+    const prev = el.dataset.prev || "";
+    // 하이픈만 지웠다면 그 앞 숫자를 지운 것으로 처리 (안 그러면 하이픈이 다시 생겨서 안 지워짐)
+    if (e.inputType === "deleteContentBackward" && digits(v) === digits(prev) && v.length < prev.length && pos > 0) {
+      const cut = v.slice(0, pos).search(/\d(?=\D*$)/);
+      if (cut >= 0) { v = v.slice(0, cut) + v.slice(pos); pos = cut; }
+    }
+    const nBefore = digits(v.slice(0, pos)).length;
+    const out = fmtTel(v);
+    el.value = out; el.dataset.prev = out;
+    if (out !== v || el.selectionStart !== pos) {
+      let i = 0, n = 0;
+      while (i < out.length && n < nBefore) { if (/\d/.test(out[i])) n++; i++; }
+      if (/\D/.test(v) && !/^[\d\s\-.()]*$/.test(v)) i = Math.min(pos, out.length);
+      try { el.setSelectionRange(i, i); } catch {}
+    }
+  });
+
   // 내 명함은 같은 저장소에 mine 표시로 저장하고, 목록·검색·내보내기에서는 뺍니다.
   const getCard = id => state.cards.find(x => x.id === id) || state.mine.find(x => x.id === id);
   const isMine = id => state.mine.some(x => x.id === id);
@@ -1434,7 +1476,8 @@ body.locked #btnTidy{display:none}
       if (seq !== readSeq || !$("#editForm")) return;
       let filled = 0;
       for (const k of ["name", "company", "dept", "title", "mobile", "phone", "fax", "email", "address", "website"]) {
-        const val = String(r.fields[k] || "").trim();
+        let val = String(r.fields[k] || "").trim();
+        if (TEL_KEYS.includes(k)) val = fmtTel(val);
         if (val) { const el = $("#f_" + k); if (el) { el.value = val; filled++; } }
       }
       const raw = $("#rawText"); if (raw) { raw.hidden = !r.text; $("#rawTa").value = r.text; }
@@ -1595,6 +1638,7 @@ body.locked #btnTidy{display:none}
     const g = k => ($("#f_" + k).value || "").trim();
     const data = {};
     for (const [k] of FIELDS) if (k !== "tags") data[k] = g(k);
+    for (const k of TEL_KEYS) data[k] = fmtTel(data[k]);
     data.tags = [...new Set(g("tags").split(/[,，#]/).map(s => s.trim()).filter(Boolean))];
     const st = $("#saveStatus");
     if (!data.name && !data.company) { st.className = "status err"; st.textContent = "이름이나 회사 중 하나는 적어 주세요."; $("#f_name").focus(); return; }
