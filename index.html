@@ -126,6 +126,14 @@ table.tbl{border-collapse:separate;border-spacing:0;width:max-content;min-width:
 .tbl tbody tr:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .tbl .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn);margin-right:6px;vertical-align:middle}
 .tbl .muted{color:var(--muted)}
+.mine-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:8px}
+.mine-card{aspect-ratio:9/5;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:6px;box-shadow:var(--shadow);padding:10px 12px;cursor:pointer;text-align:left;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;min-width:0}
+.mine-card:hover{border-color:var(--muted);border-left-color:var(--accent)}
+.mine-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mine-card span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mine-card .co,.mine-card .tt{font-size:12px;color:var(--muted)}
+.mine-card .nm{font-size:16px;font-weight:700}
+.mine-card .ph{font-family:var(--f-mono);font-size:11.5px;color:var(--muted)}
 .empty{border:1px dashed var(--line);border-radius:12px;padding:28px 20px;text-align:center;color:var(--muted);margin-top:10px}
 .empty strong{display:block;color:var(--ink);font-size:16px;margin-bottom:4px}
 .empty .actions{justify-content:center;margin-top:14px}
@@ -333,7 +341,7 @@ body.locked #btnTidy{display:none}
   ];
   const LABEL = Object.fromEntries(FIELDS);
 
-  const state = { cards: [], q: "", tag: "", sort: "company", view: "card", tk: "", tdir: 1, mode: "loading", loaded: false };
+  const state = { mine: [], cards: [], q: "", tag: "", sort: "company", view: "card", tk: "", tdir: 1, mode: "loading", loaded: false };
   let db = null, uid = null, vault = null, cardsCol = null, photosCol = null, downloads = null, imageOK = true, installEvt = null;
   const local = { photos: {} };
   let tidyBusy = false;
@@ -348,11 +356,11 @@ body.locked #btnTidy{display:none}
   }
   const store = {
     async save(id, data) {
-      if (state.mode !== "db") { const i = state.cards.findIndex(c => c.id === id); const row = { ...data, id }; if (i >= 0) state.cards[i] = row; else state.cards.push(row); render(); return; }
+      if (state.mode !== "db") { const arr = data.mine ? state.mine : state.cards; const i = arr.findIndex(c => c.id === id); const row = { ...data, id }; if (i >= 0) arr[i] = row; else arr.push(row); render(); return; }
       await settle(cardsCol.doc(id).set(data));
     },
     async del(id) {
-      if (state.mode !== "db") { state.cards = state.cards.filter(c => c.id !== id); delete local.photos[id]; render(); return; }
+      if (state.mode !== "db") { state.cards = state.cards.filter(c => c.id !== id); state.mine = state.mine.filter(c => c.id !== id); delete local.photos[id]; render(); return; }
       photosCol.doc(id).delete().catch(() => {});
       await settle(cardsCol.doc(id).delete());
     },
@@ -366,6 +374,10 @@ body.locked #btnTidy{display:none}
     },
     newId() { return cardsCol ? cardsCol.doc().id : "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
   };
+
+  // 내 명함은 같은 저장소에 mine 표시로 저장하고, 목록·검색·내보내기에서는 뺍니다.
+  const getCard = id => state.cards.find(x => x.id === id) || state.mine.find(x => x.id === id);
+  const isMine = id => state.mine.some(x => x.id === id);
 
   function errText(e) {
     const c = e && e.code;
@@ -542,12 +554,13 @@ body.locked #btnTidy{display:none}
 
   // ---------- detail ----------
   function showDetail(id, opt = {}) {
-    const c = state.cards.find(x => x.id === id); if (!c) return;
+    const c = getCard(id); if (!c) return;
     const rows = [["mobile", 1], ["phone", 1], ["fax", 1], ["email", 0], ["address", 0], ["website", 0]].filter(([k]) => c[k]);
     const met = [c.metDate, c.metAt].filter(Boolean).join(" · ");
     const log = (c.log || []).slice().sort((a, b) => (b.d || "").localeCompare(a.d || ""));
     const nc = c.nextContact || "";
     const i = dueInfo(c);
+    if (c.mine) return showMineDetail(c, rows);
     openSheet(`
       <div class="sheet-head"><h2>명함 정보</h2><button class="btn ghost" data-act="close" type="button">닫기</button></div>
       ${opt.justAdded || opt.justUpdated ? `<div class="just"><span>${opt.justUpdated ? "명함을 업데이트했습니다. 바뀐 내용은 연락 기록에 남겼어요." : "명함을 등록했습니다."} 이어서 다음 명함을 찍을 수 있어요.</span><div class="row"><span class="btn primary file-btn"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5h3l1.4-2h5.2l1.4 2h3v9.5H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="10" cy="11" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>다음 명함 촬영<input id="nx_cam" type="file" accept="image/*" capture="environment" aria-label="다음 명함 촬영"></span><button class="btn" data-act="pick" type="button">다른 방법으로 추가</button></div></div>` : ""}
@@ -597,8 +610,28 @@ body.locked #btnTidy{display:none}
     if (c.hasPhoto) store.photoGet(id).then(src => { const b = $("#photoBox"); if (!b) return; b.innerHTML = src ? `<img alt="${esc(c.name)} 명함 사진" src="${src}">` : "사진이 없습니다"; }).catch(() => { const b = $("#photoBox"); if (b) b.textContent = "사진을 불러오지 못했습니다"; });
   }
 
+  function loadPhoto(c) {
+    if (c.hasPhoto) store.photoGet(c.id).then(src => { const b = $("#photoBox"); if (!b) return; b.innerHTML = src ? `<img alt="${esc(c.name)} 명함 사진" src="${src}">` : "사진이 없습니다"; }).catch(() => { const b = $("#photoBox"); if (b) b.textContent = "사진을 불러오지 못했습니다"; });
+  }
+  function showMineDetail(c, rows) {
+    openSheet(`
+      <div class="sheet-head"><h2>내 명함</h2><button class="btn ghost" data-act="account" type="button">돌아가기</button></div>
+      ${c.hasPhoto ? `<div class="photo" id="photoBox">사진 불러오는 중…</div>` : ""}
+      <div class="big-name">${esc(c.name || "(이름 없음)")}</div>
+      <div class="sub">${esc([c.company, c.dept, c.title].filter(Boolean).join(" · "))}</div>
+      <div class="row" style="margin-top:12px"><button class="btn primary" data-act="share" type="button">내 명함 보내기</button></div>
+      ${rows.length ? `<dl class="info">${rows.map(([k, m]) => `<dt>${LABEL[k]}</dt><dd class="${m ? "mono" : ""}">${esc(c[k])}</dd><button class="copy" data-copy="${esc(c[k])}" type="button">복사</button>`).join("")}</dl>` : ""}
+      ${c.memo ? `<div class="block"><div class="label">메모</div><p class="memo">${esc(c.memo)}</p></div>` : ""}
+      <div class="footer-actions">
+        <span id="delWrap"><button class="btn danger" data-act="askdel" type="button">삭제</button></span>
+        <button class="btn" data-act="edit" type="button">수정</button>
+      </div>`);
+    sheet.dataset.id = c.id;
+    loadPhoto(c);
+  }
+
   async function patchCard(id, patch, msg) {
-    const c = state.cards.find(x => x.id === id); if (!c) return;
+    const c = getCard(id); if (!c) return;
     const { id: _, ...rest } = c;
     const next = { ...rest, ...patch, updatedAt: Date.now() };
     try { await store.save(id, next); if (state.mode === "db") { Object.assign(c, patch); } if (msg) toast(msg); showDetail(id); }
@@ -624,13 +657,13 @@ body.locked #btnTidy{display:none}
     return `sms:${to}?&body=${encodeURIComponent(text)}`;
   }
   function refreshShare() {
-    const c = state.cards.find(x => x.id === sheet.dataset.id); if (!c) return;
+    const c = getCard(sheet.dataset.id); if (!c) return;
     const txt = shareText(c);
     const out = $("#shText"); if (out && !out.dataset.edited) out.value = txt;
     const a = $("#shSms"); if (a) a.href = smsHref($("#shText").value);
   }
   function showShare(id) {
-    const c = state.cards.find(x => x.id === id); if (!c) return;
+    const c = getCard(id); if (!c) return;
     const avail = SHARE_FIELDS.filter(([k]) => c[k]);
     openSheet(`
       <div class="sheet-head"><h2>명함 전달하기</h2><button class="btn ghost" data-act="back" type="button">돌아가기</button></div>
@@ -671,7 +704,7 @@ body.locked #btnTidy{display:none}
     refreshShare(); drawShareCard(c);
   }
   async function shareNative(asImage) {
-    const c = state.cards.find(x => x.id === sheet.dataset.id); if (!c) return;
+    const c = getCard(sheet.dataset.id); if (!c) return;
     try {
       if (!asImage) { await navigator.share({ text: $("#shText").value }); return; }
       try { await document.fonts?.ready; } catch {}
@@ -714,7 +747,7 @@ body.locked #btnTidy{display:none}
     }
   }
   async function shareImage(id) {
-    const c = state.cards.find(x => x.id === id), cv = $("#shCanvas");
+    const c = getCard(id), cv = $("#shCanvas");
     if (!c || !cv) return;
     if (!downloads) { toast("이 화면에서는 이미지 저장을 쓸 수 없습니다"); return; }
     try { await document.fonts?.ready; } catch {}
@@ -728,14 +761,15 @@ body.locked #btnTidy{display:none}
   // ---------- edit ----------
   let pendingPhoto = null; // {dataUrl, blob}
   function showEdit(id, eopt = {}) {
-    const c = id ? state.cards.find(x => x.id === id) : {};
+    const c = id ? getCard(id) : {};
     const mt = eopt.mergeId && state.cards.find(x => x.id === eopt.mergeId);
     if (id && !c) return;
+    const mine = id ? !!c.mine : !!eopt.mine;
     pendingPhoto = null; crop = null;
     const v = k => esc(k === "tags" ? (c.tags || []).join(", ") : (c[k] || ""));
     const inp = (k, type = "text", full = false, extra = "") => `<div class="field ${full ? "full" : ""}"><label for="f_${k}">${LABEL[k]}</label><input id="f_${k}" type="${type}" value="${v(k)}" ${extra}></div>`;
     openSheet(`
-      <div class="sheet-head"><h2>${id ? "명함 수정" : mt ? `${esc(mt.name || mt.company || "")} 명함 업데이트` : "명함 추가"}</h2><button class="btn ghost" data-act="close" type="button">닫기</button></div>
+      <div class="sheet-head"><h2>${mine ? (id ? "내 명함 수정" : "내 명함 등록") : id ? "명함 수정" : mt ? `${esc(mt.name || mt.company || "")} 명함 업데이트` : "명함 추가"}</h2><button class="btn ghost" data-act="close" type="button">닫기</button></div>
       <label class="drop" id="drop" for="f_photo">
         <span id="dropInner">${id && c.hasPhoto ? "사진을 바꾸려면 눌러서 새 사진을 고르세요" : "명함 사진을 눌러서 고르거나 여기로 끌어다 놓으세요"}</span>
       </label>
@@ -762,28 +796,31 @@ body.locked #btnTidy{display:none}
         ${inp("email", "email")}${inp("fax", "tel")}
         ${inp("address", "text", true)}
         ${inp("website", "text", true)}
-        ${inp("metAt")}${inp("metDate", "date")}
-        <div class="field full"><label for="f_tags">태그 (쉼표로 구분)</label><input id="f_tags" type="text" value="${v("tags")}" placeholder="예: 거래처, 협력사, 2026 박람회"></div>
+        <div class="field" ${mine ? "hidden" : ""}><label for="f_metAt">${LABEL.metAt}</label><input id="f_metAt" type="text" value="${v("metAt")}"></div>
+        <div class="field" ${mine ? "hidden" : ""}><label for="f_metDate">${LABEL.metDate}</label><input id="f_metDate" type="date" value="${v("metDate")}"></div>
+        <div class="field full" ${mine ? "hidden" : ""}><label for="f_tags">태그 (쉼표로 구분)</label><input id="f_tags" type="text" value="${v("tags")}" placeholder="예: 거래처, 협력사, 2026 박람회"></div>
         <div class="field full"><label for="f_memo">메모</label><textarea id="f_memo">${v("memo")}</textarea></div>
       </form>
       <div class="status" id="saveStatus"></div>
       <div class="footer-actions">
-        <button class="btn ghost" data-act="${id ? "back" : "close"}" type="button">취소</button>
+        <button class="btn ghost" data-act="${id ? "back" : mine ? "account" : "close"}" type="button">취소</button>
         <button class="btn primary" data-act="save" type="button">저장</button>
       </div>`, "#f_name");
     sheet.dataset.id = id || "";
     sheet.dataset.dupOk = "";
     sheet.dataset.mergeId = mt ? mt.id : "";
+    sheet.dataset.mine = mine ? "1" : "";
     if (mt) showDiff(mt.id, { waiting: true });
     if (!id) $("#editForm").addEventListener("input", () => { if (sheet.dataset.mergeId && $("#matchBox") && !$("#matchBox").hidden) { clearTimeout(diffT); diffT = setTimeout(() => showDiff(sheet.dataset.mergeId), 250); } });
     if (window.CardOCR) CardOCR.preload();
     const fileIn = $("#f_photo"), drop = $("#drop");
-    const auto = !id;
-    fileIn.addEventListener("change", () => fileIn.files[0] && pickPhoto(fileIn.files[0], { read: auto, autoSave: auto }));
-    $("#f_cam").addEventListener("change", e => e.target.files[0] && pickPhoto(e.target.files[0], { read: auto, autoSave: auto }));
+    const auto = !id && !mine; // 내 명함은 사진을 읽어 채우되 자동 저장하지 않습니다
+    const readNew = !id;
+    fileIn.addEventListener("change", () => fileIn.files[0] && pickPhoto(fileIn.files[0], { read: readNew, autoSave: auto }));
+    $("#f_cam").addEventListener("change", e => e.target.files[0] && pickPhoto(e.target.files[0], { read: readNew, autoSave: auto }));
     drop.addEventListener("dragover", e => { e.preventDefault(); drop.style.borderColor = "var(--accent)"; });
     drop.addEventListener("dragleave", () => drop.style.borderColor = "");
-    drop.addEventListener("drop", e => { e.preventDefault(); drop.style.borderColor = ""; const f = e.dataTransfer.files[0]; if (f) pickPhoto(f, { read: auto, autoSave: auto }); });
+    drop.addEventListener("drop", e => { e.preventDefault(); drop.style.borderColor = ""; const f = e.dataTransfer.files[0]; if (f) pickPhoto(f, { read: readNew, autoSave: auto }); });
   }
 
   // ---------- card finder: locate the business card in a photo and straighten it ----------
@@ -1252,7 +1289,7 @@ body.locked #btnTidy{display:none}
 
   async function ensureCrop() { // editing a saved card: start from its stored photo
     if (crop) return true;
-    const id = sheet.dataset.id, c = id && state.cards.find(x => x.id === id);
+    const id = sheet.dataset.id, c = id && getCard(id);
     if (!c || !c.hasPhoto) return false;
     const note = $("#cropNote"); if (note) { note.className = "status"; note.textContent = "저장된 사진을 불러오는 중…"; }
     try {
@@ -1321,7 +1358,7 @@ body.locked #btnTidy{display:none}
   function closeCropper() {
     const box = $("#cropBox"); if (!box) return;
     box.hidden = true; box.innerHTML = ""; $("#drop").hidden = false;
-    const id = sheet.dataset.id, c = id && state.cards.find(x => x.id === id);
+    const id = sheet.dataset.id, c = id && getCard(id);
     const row = $("#cropRow"); if (row) row.hidden = !(pendingPhoto || (c && c.hasPhoto));
     if (crop && crop.readAfter && pendingPhoto) { crop.readAfter = false; readCard(); }
   }
@@ -1454,7 +1491,7 @@ body.locked #btnTidy{display:none}
   }
   const whoLine = c => esc([c.company, c.dept, c.title].filter(Boolean).join(" · ") || c.mobile || c.email || "");
   function afterRead() {
-    if (sheet.dataset.id || !$("#matchBox")) return; // 새 명함을 등록할 때만
+    if (sheet.dataset.id || sheet.dataset.mine || !$("#matchBox")) return; // 새 명함을 등록할 때만
     if (sheet.dataset.mergeId) return showDiff(sheet.dataset.mergeId);
     const ms = findMatches(readForm());
     if (ms.length) showMatches(ms);
@@ -1554,14 +1591,15 @@ body.locked #btnTidy{display:none}
 
   async function saveEdit(opt = {}) {
     const id0 = sheet.dataset.id;
-    const old = id0 ? state.cards.find(x => x.id === id0) : null;
+    const old = id0 ? getCard(id0) : null;
     const g = k => ($("#f_" + k).value || "").trim();
     const data = {};
     for (const [k] of FIELDS) if (k !== "tags") data[k] = g(k);
     data.tags = [...new Set(g("tags").split(/[,，#]/).map(s => s.trim()).filter(Boolean))];
     const st = $("#saveStatus");
     if (!data.name && !data.company) { st.className = "status err"; st.textContent = "이름이나 회사 중 하나는 적어 주세요."; $("#f_name").focus(); return; }
-    if (!old && sheet.dataset.dupOk !== "1") {
+    const mine = old ? !!old.mine : sheet.dataset.mine === "1";
+    if (!old && !mine && sheet.dataset.dupOk !== "1") {
       if (sheet.dataset.mergeId) { showDiff(sheet.dataset.mergeId); st.className = "status err"; st.textContent = "위에서 ‘업데이트’ 또는 ‘새 명함으로 등록’을 골라 주세요."; return; }
       const ms = findMatches(data);
       if (ms.length) { showMatches(ms); st.className = "status err"; st.textContent = "같은 사람이 이미 있는지 위에서 확인해 주세요."; return; }
@@ -1569,6 +1607,7 @@ body.locked #btnTidy{display:none}
     const fromPhoto = !old && !!pendingPhoto;
     const id = id0 || store.newId();
     const base = old ? (({ id: _, ...r }) => r)(old) : { createdAt: Date.now(), log: [], nextContact: "" };
+    if (mine) { base.mine = true; delete base.log; delete base.nextContact; }
     const next = { ...base, ...data, hasPhoto: !!(pendingPhoto || (old && old.hasPhoto)), updatedAt: Date.now() };
     if (pendingPhoto) next.photoCut = !!(crop && crop.done);
     st.className = "status"; st.textContent = "저장하는 중…";
@@ -1576,8 +1615,8 @@ body.locked #btnTidy{display:none}
     try {
       if (pendingPhoto) await store.photoSet(id, pendingPhoto.dataUrl);
       await store.save(id, next);
-      if (state.mode === "db" && !state.cards.find(x => x.id === id)) state.cards.push({ ...next, id });
-      toast(old ? "수정했습니다" : "명함을 추가했습니다");
+      if (state.mode === "db" && !getCard(id)) (mine ? state.mine : state.cards).push({ ...next, id });
+      toast(old ? "수정했습니다" : mine ? "내 명함을 등록했습니다" : "명함을 추가했습니다");
       render(); showDetail(id, fromPhoto ? { justAdded: true } : undefined);
     } catch (e) {
       st.className = "status err"; st.textContent = errText(e);
@@ -1844,11 +1883,14 @@ body.locked #btnTidy{display:none}
     if (t.dataset.copy != null) return copy(t.dataset.copy, t);
     if (t.id === "btnRead") return readCard();
     const id = sheet.dataset.id;
-    const c = id && state.cards.find(x => x.id === id);
+    const c = id && getCard(id);
     switch (t.dataset.act) {
       case "close": if (readCtl) readCtl.abort(); return closeSheet();
       case "back": if (readCtl) readCtl.abort(); return showDetail(id);
       case "edit": return showEdit(id);
+      case "account": if (readCtl) readCtl.abort(); return showAccount();
+      case "mineadd": return showEdit(null, { mine: true });
+      case "mineopen": return showDetail(t.dataset.id);
       case "share": return showShare(id);
       case "sharecopy": return shareCopy(t.dataset.kind);
       case "shareimg": return shareImage(id);
@@ -1857,7 +1899,7 @@ body.locked #btnTidy{display:none}
       case "askdel": $("#delWrap").innerHTML = `<span class="row"><span class="sub" style="font-size:14px">정말 삭제할까요?</span><button class="btn danger" data-act="del" type="button">삭제</button><button class="btn ghost" data-act="nodel" type="button">취소</button></span>`; return;
       case "nodel": $("#delWrap").innerHTML = `<button class="btn danger" data-act="askdel" type="button">삭제</button>`; return;
       case "del":
-        try { await store.del(id); state.cards = state.cards.filter(x => x.id !== id); render(); closeSheet(); toast("삭제했습니다"); } catch (er) { toast(errText(er)); }
+        try { const wasMine = isMine(id); await store.del(id); state.cards = state.cards.filter(x => x.id !== id); state.mine = state.mine.filter(x => x.id !== id); render(); if (wasMine) showAccount(); else closeSheet(); toast("삭제했습니다"); } catch (er) { toast(errText(er)); }
         return;
       case "addlog": {
         if (!c) return;
@@ -1968,10 +2010,19 @@ body.locked #btnTidy{display:none}
   }
   function showAccount() {
     if (!me) return;
+    const mineRows = state.mine.slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     openSheet(`
       <div class="sheet-head"><h2>내 계정</h2><button class="btn ghost" data-act="close" type="button">닫기</button></div>
+      <div class="block" style="margin-top:0;border-top:0;padding-top:0">
+        <div class="label">내 명함</div>
+        <div class="mine-list">${mineRows.length ? mineRows.map(c => `<button class="mine-card" data-act="mineopen" data-id="${esc(c.id)}" type="button"><span class="co">${esc(c.company || " ")}</span><span class="nm">${esc(c.name || "(이름 없음)")}</span><span class="tt">${esc([c.dept, c.title].filter(Boolean).join(" · ") || " ")}</span><span class="ph">${esc(c.mobile || c.phone || c.email || " ")}</span></button>`).join("") : `<p class="help" style="margin:0">아직 등록한 내 명함이 없습니다. 내 명함을 등록해 두면 언제든 문자·카카오톡·이미지로 바로 보낼 수 있어요.</p>`}</div>
+        <div class="row" style="margin-top:10px"><button class="btn primary" data-act="mineadd" type="button">+ 내 명함 ${mineRows.length ? "추가" : "등록"}</button></div>
+        ${mineRows.length ? `<p class="help">회사가 바뀌었거나 영문 명함이 있으면 여러 장 등록할 수 있습니다. 명함을 누르면 보기·수정·보내기를 할 수 있어요.</p>` : ""}
+      </div>
+      <div class="block">
       <p style="margin:0"><b>${esc(me.email || me.displayName || "")}</b>(으)로 로그인되어 있습니다.</p>
       <p class="help">폰과 PC에서 같은 구글 계정으로 로그인하면 명함이 자동으로 함께 보입니다. 인터넷이 끊겨도 이 기기에 저장해 두었다가 연결되면 올립니다.</p>
+      </div>
       <div class="footer-actions"><button class="btn" id="btnInstall2" data-act="install" type="button" ${installEvt ? "" : "hidden"}>홈 화면에 설치</button><button class="btn danger" data-act="signout" type="button">로그아웃</button></div>`);
     const b2 = $("#btnInstall2"); if (b2) b2.addEventListener("click", () => { closeSheet(); doInstall(); });
   }
@@ -1992,7 +2043,7 @@ body.locked #btnTidy{display:none}
       if (unsub) { unsub(); unsub = null; }
       me = user;
       if (!user) {
-        state.cards = []; state.loaded = false; state.mode = "loading"; uid = null; cardsCol = photosCol = null;
+        state.cards = []; state.mine = []; state.loaded = false; state.mode = "loading"; uid = null; cardsCol = photosCol = null;
         if (!sheet.hidden) closeSheet();
         $("#btnAccount").hidden = true;
         showGate(LOGIN_HTML);
@@ -2006,10 +2057,11 @@ body.locked #btnTidy{display:none}
       photosCol = vault.collection("photos");
       state.mode = "db"; state.loaded = false; render();
       unsub = cardsCol.onSnapshot(snap => {
-        state.cards = snap.docs.map(x => ({ ...x.data(), id: x.id }));
+        const all = snap.docs.map(x => ({ ...x.data(), id: x.id }));
+        state.cards = all.filter(c => !c.mine); state.mine = all.filter(c => c.mine);
         state.loaded = true; render();
         // 다른 기기에서 지운 명함을 보고 있었다면 닫기
-        if (!sheet.hidden && sheet.dataset.id && $("#delWrap") && !state.cards.some(x => x.id === sheet.dataset.id)) closeSheet();
+        if (!sheet.hidden && sheet.dataset.id && $("#delWrap") && !getCard(sheet.dataset.id)) closeSheet();
       }, err => {
         state.loaded = true; render();
         toast(err && err.code === "permission-denied" ? "명함을 읽을 권한이 없습니다. 설치 안내서 4단계(보안 규칙)를 확인해 주세요." : "명함을 불러오지 못했습니다. 새로고침해 주세요.");
