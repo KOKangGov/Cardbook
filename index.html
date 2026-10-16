@@ -119,6 +119,12 @@ table.tbl{border-collapse:separate;border-spacing:0;width:max-content;min-width:
 .tbl th .ar{font-family:var(--f-mono);font-size:11px;margin-left:3px;color:var(--accent)}
 .tbl th:first-child,.tbl td:first-child{position:sticky;left:0;z-index:1;background:var(--surface);font-weight:600}
 .tbl th:first-child{z-index:3;background:var(--bg)}
+.tbl th:first-child,.tbl td:first-child{width:var(--name-w,auto);min-width:var(--name-w,0);max-width:var(--name-w,240px);box-sizing:border-box}
+.tbl th:first-child{padding-right:24px}
+.col-rs{position:absolute;top:0;right:-1px;bottom:0;width:22px;cursor:col-resize;touch-action:none;display:flex;align-items:center;justify-content:flex-end;padding-right:4px;box-sizing:border-box}
+.col-rs::after{content:"";width:3px;height:60%;border-radius:2px;background:var(--line)}
+.col-rs:hover::after,.col-rs.on::after{background:var(--accent)}
+body.col-resizing,body.col-resizing *{cursor:col-resize!important;user-select:none!important;-webkit-user-select:none!important}
 .tbl td.num{font-family:var(--f-mono);font-size:12.5px}
 .tbl td.wrap-cell{max-width:320px}
 .tbl tbody tr{cursor:pointer}
@@ -528,7 +534,7 @@ body.locked #btnTidy{display:none}
         return (typeof va === "number" ? va - vb : coll.compare(va, vb)) * dir;
       });
     }
-    const head = COLS.map(([k, label]) => `<th data-tk="${k}" scope="col" title="눌러서 정렬">${label}${state.tk === k ? `<span class="ar">${state.tdir > 0 ? "▲" : "▼"}</span>` : ""}</th>`).join("");
+    const head = COLS.map(([k, label], ci) => `<th data-tk="${k}" scope="col" title="눌러서 정렬">${label}${state.tk === k ? `<span class="ar">${state.tdir > 0 ? "▲" : "▼"}</span>` : ""}${ci === 0 ? `<span class="col-rs" role="separator" aria-orientation="vertical" aria-label="이름 칸 너비 조절 (끌어서 조절, 두 번 눌러 원래대로)" title="끌어서 너비 조절 · 두 번 눌러 원래대로"></span>` : ""}</th>`).join("");
     const rows = list.map(c => {
       const i = dueInfo(c);
       const tds = COLS.map(([k, , cls]) => {
@@ -540,7 +546,8 @@ body.locked #btnTidy{display:none}
       }).join("");
       return `<tr data-id="${esc(c.id)}" tabindex="0">${tds}</tr>`;
     }).join("");
-    return `<div class="tbl-wrap"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+    const nw = nameW();
+    return `<div class="tbl-wrap"><table class="tbl"${nw ? ` style="--name-w:${nw}px"` : ""}><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
   }
   function setView(v) {
     state.view = v === "table" ? "table" : "card";
@@ -548,6 +555,40 @@ body.locked #btnTidy{display:none}
     document.querySelectorAll(".seg [data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === state.view)));
     try { localStorage.setItem("cb.view", state.view); } catch {}
   }
+
+  // 표 보기: 이름(고정) 칸 너비 조절 — 기기별로 기억
+  const NAME_MIN = 56, NAME_MAX = 360;
+  function nameW() {
+    try { const v = parseInt(localStorage.getItem("cb.nameW"), 10); return v >= NAME_MIN && v <= NAME_MAX ? v : 0; } catch { return 0; }
+  }
+  function saveNameW(v) { try { v ? localStorage.setItem("cb.nameW", String(v)) : localStorage.removeItem("cb.nameW"); } catch {} }
+  let rsLastTap = 0;
+  document.addEventListener("pointerdown", e => {
+    const h = e.target.closest(".tbl .col-rs");
+    if (!h) return;
+    e.preventDefault(); e.stopPropagation();
+    const tbl = h.closest("table"), th = h.closest("th");
+    const now = Date.now();
+    if (now - rsLastTap < 350) { // 두 번 탭 → 원래 너비
+      rsLastTap = 0; tbl.style.removeProperty("--name-w"); saveNameW(0); toast("이름 칸 너비를 원래대로 되돌렸어요"); return;
+    }
+    rsLastTap = now;
+    const startX = e.clientX, startW = th.getBoundingClientRect().width;
+    let w = Math.round(startW), moved = false;
+    h.classList.add("on"); document.body.classList.add("col-resizing");
+    try { h.setPointerCapture(e.pointerId); } catch {}
+    const move = ev => {
+      if (Math.abs(ev.clientX - startX) > 3) moved = true;
+      w = Math.round(Math.min(NAME_MAX, Math.max(NAME_MIN, startW + ev.clientX - startX)));
+      tbl.style.setProperty("--name-w", w + "px");
+    };
+    const up = () => {
+      h.removeEventListener("pointermove", move); h.removeEventListener("pointerup", up); h.removeEventListener("pointercancel", up);
+      h.classList.remove("on"); document.body.classList.remove("col-resizing");
+      if (moved) { saveNameW(w); rsLastTap = 0; }
+    };
+    h.addEventListener("pointermove", move); h.addEventListener("pointerup", up); h.addEventListener("pointercancel", up);
+  });
 
   // Highlight the search term inside already-plain text.
   function hl(text, q) {
@@ -1891,6 +1932,7 @@ body.locked #btnTidy{display:none}
 
   // ---------- events ----------
   document.addEventListener("click", async e => {
+    if (e.target.closest(".col-rs")) return;
     const th = e.target.closest(".tbl th[data-tk]");
     if (th) { const k = th.dataset.tk; if (state.tk === k) { if (state.tdir > 0) state.tdir = -1; else state.tk = ""; } else { state.tk = k; state.tdir = 1; } render(); return; }
     const tr = e.target.closest(".tbl tbody tr[data-id]");
