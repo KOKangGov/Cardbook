@@ -114,13 +114,15 @@ body.wide .wrap{max-width:1440px}
 .tbl-wrap{margin-top:10px;overflow:auto;max-height:calc(100vh - 140px);border:1px solid var(--line);border-radius:8px;background:var(--surface)}
 table.tbl{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;font-size:13.5px}
 .tbl th,.tbl td{padding:7px 10px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);text-align:left;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;vertical-align:top}
-.tbl th{position:sticky;top:0;z-index:2;background:var(--bg);font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none}
+.tbl th{position:sticky;top:0;z-index:2;background:var(--bg);font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none;padding-right:24px}
 .tbl th:hover{color:var(--ink)}
 .tbl th .ar{font-family:var(--f-mono);font-size:11px;margin-left:3px;color:var(--accent)}
+.tbl th .ar.off{color:var(--line)}
+.tbl th:hover .ar.off{color:var(--muted)}
+.tbl th[aria-sort="ascending"],.tbl th[aria-sort="descending"]{color:var(--ink)}
 .tbl th:first-child,.tbl td:first-child{position:sticky;left:0;z-index:1;background:var(--surface);font-weight:600}
 .tbl th:first-child{z-index:3;background:var(--bg)}
-.tbl th:first-child,.tbl td:first-child{width:var(--name-w,auto);min-width:var(--name-w,0);max-width:var(--name-w,240px);box-sizing:border-box}
-.tbl th:first-child{padding-right:24px}
+.tbl th,.tbl td{box-sizing:border-box}
 .col-rs{position:absolute;top:0;right:-1px;bottom:0;width:22px;cursor:col-resize;touch-action:none;display:flex;align-items:center;justify-content:flex-end;padding-right:4px;box-sizing:border-box}
 .col-rs::after{content:"";width:3px;height:60%;border-radius:2px;background:var(--line)}
 .col-rs:hover::after,.col-rs.on::after{background:var(--accent)}
@@ -523,6 +525,12 @@ body.locked #btnTidy{display:none}
     if (k === "createdAt") return c.createdAt ? ymd(new Date(c.createdAt)) : "";
     return String(c[k] ?? "").replace(/\s+/g, " ").trim();
   };
+  // 칸별 너비 규칙: --w-<키> 변수가 있으면 그 너비로 고정, 없으면 원래 자동 너비
+  (() => {
+    const st = document.createElement("style");
+    st.textContent = COLS.map(([k, , cls], i) => `.tbl th:nth-child(${i + 1}),.tbl td:nth-child(${i + 1}){width:var(--w-${k},auto);min-width:var(--w-${k},0);max-width:var(--w-${k},${cls === "wrap-cell" ? 320 : 240}px)}`).join("\n");
+    document.head.appendChild(st);
+  })();
   function tableHtml(list, q) {
     if (state.tk) {
       const coll = new Intl.Collator("ko", { numeric: true });
@@ -534,7 +542,10 @@ body.locked #btnTidy{display:none}
         return (typeof va === "number" ? va - vb : coll.compare(va, vb)) * dir;
       });
     }
-    const head = COLS.map(([k, label], ci) => `<th data-tk="${k}" scope="col" title="눌러서 정렬">${label}${state.tk === k ? `<span class="ar">${state.tdir > 0 ? "▲" : "▼"}</span>` : ""}${ci === 0 ? `<span class="col-rs" role="separator" aria-orientation="vertical" aria-label="이름 칸 너비 조절 (끌어서 조절, 두 번 눌러 원래대로)" title="끌어서 너비 조절 · 두 번 눌러 원래대로"></span>` : ""}</th>`).join("");
+    const head = COLS.map(([k, label]) => {
+      const on = state.tk === k;
+      return `<th data-tk="${k}" scope="col" title="눌러서 정렬 (오름차순 → 내림차순 → 해제)"${on ? ` aria-sort="${state.tdir > 0 ? "ascending" : "descending"}"` : ""}>${label}<span class="ar${on ? "" : " off"}" aria-hidden="true">${on ? (state.tdir > 0 ? "▲" : "▼") : "⇅"}</span><span class="col-rs" data-ck="${k}" role="separator" aria-orientation="vertical" aria-label="${label} 칸 너비 조절 (끌어서 조절, 두 번 눌러 원래대로)" title="끌어서 너비 조절 · 두 번 눌러 원래대로"></span></th>`;
+    }).join("");
     const rows = list.map(c => {
       const i = dueInfo(c);
       const tds = COLS.map(([k, , cls]) => {
@@ -546,8 +557,8 @@ body.locked #btnTidy{display:none}
       }).join("");
       return `<tr data-id="${esc(c.id)}" tabindex="0">${tds}</tr>`;
     }).join("");
-    const nw = nameW();
-    return `<div class="tbl-wrap"><table class="tbl"${nw ? ` style="--name-w:${nw}px"` : ""}><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+    const ws = colWs(), wst = Object.entries(ws).map(([k, v]) => `--w-${k}:${v}px`).join(";");
+    return `<div class="tbl-wrap"><table class="tbl"${wst ? ` style="${wst}"` : ""}><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
   }
   function setView(v) {
     state.view = v === "table" ? "table" : "card";
@@ -556,36 +567,50 @@ body.locked #btnTidy{display:none}
     try { localStorage.setItem("cb.view", state.view); } catch {}
   }
 
-  // 표 보기: 이름(고정) 칸 너비 조절 — 기기별로 기억
-  const NAME_MIN = 56, NAME_MAX = 360;
-  function nameW() {
-    try { const v = parseInt(localStorage.getItem("cb.nameW"), 10); return v >= NAME_MIN && v <= NAME_MAX ? v : 0; } catch { return 0; }
+  // 표 보기: 모든 칸 너비 조절 — 기기별로 기억
+  const COL_MIN = 40, COL_MAX = 600;
+  function colWs() {
+    let o = {};
+    try { o = JSON.parse(localStorage.getItem("cb.colW") || "{}") || {}; } catch {}
+    try { // 예전 이름 칸 너비 설정 옮겨오기
+      const old = parseInt(localStorage.getItem("cb.nameW"), 10);
+      if (old && !o.name) { o.name = old; localStorage.setItem("cb.colW", JSON.stringify(o)); }
+      localStorage.removeItem("cb.nameW");
+    } catch {}
+    const keys = new Set(COLS.map(c => c[0]));
+    for (const k of Object.keys(o)) { const v = o[k]; if (!keys.has(k) || !(v >= COL_MIN && v <= COL_MAX)) delete o[k]; }
+    return o;
   }
-  function saveNameW(v) { try { v ? localStorage.setItem("cb.nameW", String(v)) : localStorage.removeItem("cb.nameW"); } catch {} }
-  let rsLastTap = 0;
+  function saveColW(k, v) {
+    const o = colWs();
+    if (v) o[k] = v; else delete o[k];
+    try { Object.keys(o).length ? localStorage.setItem("cb.colW", JSON.stringify(o)) : localStorage.removeItem("cb.colW"); } catch {}
+  }
+  let rsLastTap = 0, rsLastKey = "";
   document.addEventListener("pointerdown", e => {
     const h = e.target.closest(".tbl .col-rs");
     if (!h) return;
     e.preventDefault(); e.stopPropagation();
-    const tbl = h.closest("table"), th = h.closest("th");
+    const tbl = h.closest("table"), th = h.closest("th"), k = h.dataset.ck;
+    const label = (COLS.find(c => c[0] === k) || [, ""])[1];
     const now = Date.now();
-    if (now - rsLastTap < 350) { // 두 번 탭 → 원래 너비
-      rsLastTap = 0; tbl.style.removeProperty("--name-w"); saveNameW(0); toast("이름 칸 너비를 원래대로 되돌렸어요"); return;
+    if (now - rsLastTap < 350 && rsLastKey === k) { // 두 번 탭 → 원래 너비
+      rsLastTap = 0; tbl.style.removeProperty("--w-" + k); saveColW(k, 0); toast(`${label} 칸 너비를 원래대로 되돌렸어요`); return;
     }
-    rsLastTap = now;
+    rsLastTap = now; rsLastKey = k;
     const startX = e.clientX, startW = th.getBoundingClientRect().width;
     let w = Math.round(startW), moved = false;
     h.classList.add("on"); document.body.classList.add("col-resizing");
     try { h.setPointerCapture(e.pointerId); } catch {}
     const move = ev => {
       if (Math.abs(ev.clientX - startX) > 3) moved = true;
-      w = Math.round(Math.min(NAME_MAX, Math.max(NAME_MIN, startW + ev.clientX - startX)));
-      tbl.style.setProperty("--name-w", w + "px");
+      w = Math.round(Math.min(COL_MAX, Math.max(COL_MIN, startW + ev.clientX - startX)));
+      tbl.style.setProperty("--w-" + k, w + "px");
     };
     const up = () => {
       h.removeEventListener("pointermove", move); h.removeEventListener("pointerup", up); h.removeEventListener("pointercancel", up);
       h.classList.remove("on"); document.body.classList.remove("col-resizing");
-      if (moved) { saveNameW(w); rsLastTap = 0; }
+      if (moved) { saveColW(k, w); rsLastTap = 0; }
     };
     h.addEventListener("pointermove", move); h.addEventListener("pointerup", up); h.addEventListener("pointercancel", up);
   });
@@ -1934,7 +1959,7 @@ body.locked #btnTidy{display:none}
   document.addEventListener("click", async e => {
     if (e.target.closest(".col-rs")) return;
     const th = e.target.closest(".tbl th[data-tk]");
-    if (th) { const k = th.dataset.tk; if (state.tk === k) { if (state.tdir > 0) state.tdir = -1; else state.tk = ""; } else { state.tk = k; state.tdir = 1; } render(); return; }
+    if (th) { const k = th.dataset.tk; if (state.tk === k) { if (state.tdir > 0) state.tdir = -1; else state.tk = ""; } else { state.tk = k; state.tdir = 1; } try { state.tk ? localStorage.setItem("cb.tsort", state.tk + ":" + state.tdir) : localStorage.removeItem("cb.tsort"); } catch {} render(); return; }
     const tr = e.target.closest(".tbl tbody tr[data-id]");
     if (tr) { if (String(window.getSelection() || "").length) return; return showDetail(tr.dataset.id); }
     const t = e.target.closest("button,[data-act]"); if (!t) return;
@@ -2032,9 +2057,10 @@ body.locked #btnTidy{display:none}
   });
   let qT = 0;
   $("#q").addEventListener("input", e => { clearTimeout(qT); qT = setTimeout(() => { state.q = e.target.value; render(); }, 120); });
-  $("#sort").addEventListener("change", e => { state.sort = e.target.value; state.tk = ""; try { localStorage.setItem("cb.sort2", state.sort); } catch {} render(); });
+  $("#sort").addEventListener("change", e => { state.sort = e.target.value; state.tk = ""; try { localStorage.setItem("cb.sort2", state.sort); localStorage.removeItem("cb.tsort"); } catch {} render(); });
   document.addEventListener("keydown", e => { const tr = e.target.closest && e.target.closest(".tbl tbody tr[data-id]"); if (tr && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); showDetail(tr.dataset.id); } });
   try { setView(localStorage.getItem("cb.view") || "card"); } catch { setView("card"); }
+  try { const [tk, td] = (localStorage.getItem("cb.tsort") || "").split(":"); if (tk && COLS.some(c => c[0] === tk)) { state.tk = tk; state.tdir = td === "-1" ? -1 : 1; } } catch {}
   try { const s = localStorage.getItem("cb.sort2"); if (s && ["company", "recent", "name"].includes(s)) { state.sort = s; $("#sort").value = s; } } catch {}
 
   // ---------- 파일 저장 (엑셀·이미지) ----------
