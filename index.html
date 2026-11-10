@@ -66,7 +66,7 @@ h1{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:0;line-height:1.2
 .search{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .qbox{flex:1 1 240px;min-width:0;position:relative;display:flex;align-items:center}
 .qbox svg{position:absolute;left:13px;width:18px;height:18px;color:var(--muted);pointer-events:none}
-.qbox input{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:12px 40px 12px 40px;font-size:15.5px}
+.qbox input{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:7px 38px 7px 38px;font-size:15px}
 .qbox input:focus{border-color:var(--accent)}
 .qbox kbd{position:absolute;right:10px;font-family:var(--f-mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px}
 .qbox input:not(:placeholder-shown)~kbd{display:none}
@@ -80,8 +80,8 @@ mark{background:var(--accent-soft);color:var(--ink);border-radius:2px;padding:0 
 .drive-note{font-size:13.5px;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .drive-note.err{border-color:var(--danger)}
 .drive-note a{color:var(--accent);font-weight:500}
-.search select{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px 10px}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.search select{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:9px 10px;font-size:14.5px;line-height:1.3}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
 .chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 11px;font-size:13px;cursor:pointer;color:var(--muted)}
 .chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
 .label{font-size:12px;font-weight:500;letter-spacing:.06em;color:var(--muted);text-transform:uppercase}
@@ -106,7 +106,7 @@ section.list{margin-top:24px}
 .card .cam{position:absolute;bottom:10px;right:12px;font-size:10px;font-family:var(--f-mono);color:var(--muted);letter-spacing:.05em}
 /* view switch + spreadsheet view */
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:2px}
-.seg button{border:0;background:transparent;border-radius:8px;padding:8px 11px;cursor:pointer;color:var(--muted);font-size:14px;display:inline-flex;align-items:center;gap:5px}
+.seg button{border:0;background:transparent;border-radius:8px;padding:5px 11px;cursor:pointer;color:var(--muted);font-size:14px;display:inline-flex;align-items:center;gap:5px}
 .seg button svg{width:16px;height:16px}
 .seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--ink);font-weight:500}
 .seg button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
@@ -301,9 +301,9 @@ header.top .btn.ghost:hover{color:var(--head-ink);border-color:var(--head-line);
 header.top .btn.primary,header.top #btnInstall{font-weight:700;box-shadow:0 4px 12px -4px color-mix(in srgb,var(--accent) 70%,transparent)}
 header.top .btn:focus-visible{outline-color:var(--head-ink)}
 
-.searchbar{padding-block:12px 6px}
+.searchbar{padding-block:10px 6px}
 .qbox input,.search select,.seg{box-shadow:0 1px 2px rgba(24,34,45,.05)}
-.qbox input{border-radius:12px}
+.qbox input{border-radius:10px}
 .chip{padding:4px 12px}
 .chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:500}
 .label{font-size:13.5px;font-weight:700;letter-spacing:0;color:var(--ink);text-transform:none;display:flex;align-items:center;gap:7px}
