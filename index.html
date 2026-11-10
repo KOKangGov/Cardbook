@@ -281,15 +281,95 @@ body.locked #btnTidy{display:none}
 .match input[type=search]{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:9px 11px;font-size:15px;width:100%}
 .just{border:1px solid var(--accent);background:var(--accent-soft);border-radius:10px;padding:10px 12px;margin-bottom:12px;display:grid;gap:8px;font-size:14px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;z-index:40;box-shadow:var(--shadow)}
+
+/* ===== 디자인 새 단장 (2026-11) =====
+   회사마다 고유한 색을 정해 카드의 왼쪽 띠와 머리글자 딱지에 쓰고, 머리말은 짙은 색 띠로 강조한다 */
+:root{--paper:#FFFFFF;--head-a:#10323F;--head-b:#0F6B62;--logo-ink:#10323F}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--paper:#1D252B;--head-a:#0C1D24;--head-b:#12433E;--logo-ink:#0C1D24}}
+:root[data-theme="dark"]{--paper:#1D252B;--head-a:#0C1D24;--head-b:#12433E;--logo-ink:#0C1D24}
+
+header.top{align-items:center;margin-top:14px;padding:18px 20px;border-radius:18px;color:#fff;
+  background:radial-gradient(120% 160% at 100% 0,rgba(255,255,255,.14) 0,rgba(255,255,255,0) 55%),linear-gradient(120deg,var(--head-a),var(--head-b));
+  box-shadow:0 10px 28px -14px rgba(16,50,63,.75)}
+.brand{display:flex;align-items:center;gap:13px;min-width:0}
+.brand .logo{width:46px;height:46px;flex:none;color:#fff}
+header.top h1{font-size:24px;color:#fff}
+header.top .count{display:inline-block;margin-top:5px;padding:1px 10px;border-radius:999px;background:rgba(255,255,255,.16);color:rgba(255,255,255,.92);font-family:var(--f-body);font-size:12.5px;letter-spacing:0}
+header.top .count:empty{display:none}
+header.top .btn.ghost{color:rgba(255,255,255,.86)}
+header.top .btn.ghost:hover{color:#fff;border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.1)}
+header.top .btn.primary,header.top #btnInstall{background:#fff;color:var(--head-a);border-color:#fff;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+header.top .btn:focus-visible{outline-color:#fff}
+
+.searchbar{padding-block:12px 6px}
+.qbox input,.search select,.seg{box-shadow:0 1px 2px rgba(24,34,45,.05)}
+.qbox input{border-radius:12px}
+.chip{padding:4px 12px}
+.chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:500}
+.label{font-size:13.5px;font-weight:700;letter-spacing:0;color:var(--ink);text-transform:none;display:flex;align-items:center;gap:7px}
+.label::before{content:"";width:4px;height:14px;border-radius:2px;background:var(--accent)}
+
+/* 회사 색: --h(색상 각도)에서 띠·딱지 색을 만든다 */
+.card,.group,.due-row,.cdot{--c:hsl(var(--h,172) 52% 44%)}
+.mk{flex:none;display:inline-grid;place-items:center;width:26px;height:26px;border-radius:8px;font-size:13px;font-weight:700;line-height:1;
+  background:color-mix(in srgb,var(--c) 17%,var(--surface));color:color-mix(in srgb,var(--c) 72%,var(--ink))}
+
+.grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.card{background:var(--paper);border-radius:10px;padding:13px 14px 12px 20px;transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease}
+.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:var(--c)}
+.card:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--c) 45%,var(--line));box-shadow:0 2px 4px rgba(24,34,45,.06),0 12px 26px -10px color-mix(in srgb,var(--c) 45%,transparent)}
+.card .nm{font-size:18px}
+.card .co{font-size:12px;font-weight:500;color:color-mix(in srgb,var(--c) 55%,var(--ink))}
+.card .mk{position:absolute;right:12px;bottom:11px;width:30px;height:30px;border-radius:9px;font-size:15px}
+.card .cam{right:50px;bottom:17px}
+.card .ph,.card .hit{padding-right:40px}
+.card .dot{box-shadow:0 0 0 3px var(--warn-soft)}
+@media (prefers-reduced-motion: reduce){.card{transition:none}.card:hover{transform:none}}
+
+.group{margin-top:22px}
+.group-head{align-items:center;gap:9px;border-bottom:0;padding-bottom:2px}
+.group-head h3{font-size:15.5px}
+.group-head>span:last-child{font-family:var(--f-body);font-size:12px;font-weight:500;padding:1px 9px;border-radius:999px;background:color-mix(in srgb,var(--c) 13%,var(--surface));color:color-mix(in srgb,var(--c) 70%,var(--ink))}
+
+.due-row{border-radius:12px;padding:8px 12px;box-shadow:0 1px 2px rgba(24,34,45,.04)}
+.due-row .mk{border-radius:50%;width:28px;height:28px}
+.due-row .sub{color:var(--muted);font-size:13.5px}
+.due-row:hover{border-color:var(--c)}
+
+.tbl-wrap,.tbl-hs{border-radius:12px}
+.tbl-wrap{box-shadow:var(--shadow)}
+.tbl th{background:color-mix(in srgb,var(--accent) 10%,var(--surface));color:var(--ink);border-bottom:2px solid color-mix(in srgb,var(--accent) 35%,var(--line))}
+.tbl th:first-child{background:color-mix(in srgb,var(--accent) 10%,var(--surface))}
+.tbl th .ar.off{color:var(--muted);opacity:.55}
+.tbl tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--bg) 55%,var(--surface))}
+.tbl tbody tr:hover td{background:var(--accent-soft)}
+.tbl th,.tbl td{border-right-color:color-mix(in srgb,var(--line) 55%,transparent)}
+.tbl td:first-child{box-shadow:1px 0 0 var(--line)}
+.cdot{display:inline-block;width:8px;height:8px;border-radius:3px;background:var(--c);margin-right:7px;vertical-align:1px}
+
+.empty{background:var(--surface);border-radius:14px}
+.sheet{border-radius:20px 20px 0 0}
+.sheet-head{padding-bottom:10px;border-bottom:1px solid var(--line)}
+.gate-card{border-radius:18px}
+@media (max-width:520px){
+  header.top{padding:14px 14px;border-radius:16px;margin-top:10px}
+  .brand .logo{width:40px;height:40px}
+  header.top h1{font-size:21px}
+  header.top .actions{width:100%}
+  header.top .btn.primary{margin-left:auto}
+}
 </style>
 
 </head>
 <body>
 <div class="wrap">
   <header class="top">
-    <div>
-      <h1>내 명함첩</h1>
-      <div class="count" id="count">불러오는 중…</div>
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 44 44" aria-hidden="true"><rect x="9" y="7" width="29" height="19" rx="3.5" fill="currentColor" opacity=".28" transform="rotate(8 23 16)"/><rect x="5" y="14" width="32" height="21" rx="3.5" fill="currentColor"/><circle cx="14" cy="22.5" r="3.4" fill="var(--logo-ink)"/><path d="M8.6 31.2c.9-3 3-4.4 5.4-4.4s4.5 1.400 5.400 4.400z" fill="var(--logo-ink)"/><path d="M23.5 21h9.5M23.5 25.5h9.5M23.5 30h6" stroke="var(--logo-ink)" stroke-width="2" stroke-linecap="round"/></svg>
+      <div>
+        <h1>내 명함첩</h1>
+        <div class="count" id="count">불러오는 중…</div>
+      </div>
     </div>
     <div class="actions">
       <button class="btn ghost" id="btnImport" type="button">가져오기</button>
@@ -344,6 +424,9 @@ body.locked #btnTidy{display:none}
 (() => {
   "use strict";
   const $ = (s, r = document) => r.querySelector(s);
+  // 회사 이름마다 늘 같은 색(색상 각도)을 정해 카드 띠·머리글자 딱지에 쓴다
+  const hueOf = s => { s = String(s || "").trim(); if (!s) return 172; let h = 0; for (const ch of s) h = (h * 31 + ch.codePointAt(0)) % 360; return h; };
+  const initOf = s => { const t = String(s || "").trim(), m = t.replace(/^(주식회사|유한회사|재단법인|사단법인|\(주\)|（주）|㈜)\s*/, ""); return [...(m || t)][0] || "·"; };
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const digits = s => String(s ?? "").replace(/\D/g, "");
   const pad = n => String(n).padStart(2, "0");
@@ -492,7 +575,7 @@ body.locked #btnTidy{display:none}
     const due = state.cards.map(c => ({ c, i: dueInfo(c) })).filter(x => x.i).sort((a, b) => a.i.d - b.i.d);
     $("#due").hidden = !due.length;
     $("#dueList").innerHTML = due.slice(0, 8).map(({ c, i }) =>
-      `<button class="due-row" data-id="${esc(c.id)}" type="button"><span class="who"><strong>${esc(c.name || "(이름 없음)")}</strong> <span class="sub">${esc([c.company, c.title].filter(Boolean).join(" · "))}</span></span><span class="pill ${i.cls}">${i.text}</span></button>`).join("");
+      `<button class="due-row" data-id="${esc(c.id)}" type="button" style="--h:${hueOf(c.company || c.name)}"><span class="mk" aria-hidden="true">${esc(initOf(c.name || c.company))}</span><span class="who"><strong>${esc(c.name || "(이름 없음)")}</strong> <span class="sub">${esc([c.company, c.title].filter(Boolean).join(" · "))}</span></span><span class="pill ${i.cls}">${i.text}</span></button>`).join("");
 
     const list = filtered();
     $("#listLabel").textContent = state.q || state.tag ? `검색 결과 ${list.length}장` : "전체 명함";
@@ -514,7 +597,8 @@ body.locked #btnTidy{display:none}
     const cardHtml = c => {
       const i = dueInfo(c);
       const hit = matchLine(c, q);
-      return `<button class="card" data-id="${esc(c.id)}" type="button">
+      return `<button class="card" data-id="${esc(c.id)}" type="button" style="--h:${hueOf(c.company || c.name)}">
+        <span class="mk" aria-hidden="true">${esc(initOf(c.company || c.name))}</span>
         ${i && i.cls === "over" ? `<span class="dot" title="연락할 때가 됐어요"></span>` : ""}
         <span class="co">${hl(c.company || " ", q)}</span>
         <span><span class="nm" style="display:block">${hl(c.name || "(이름 없음)", q)}</span><span class="tt" style="display:block">${hl([c.dept, c.title].filter(Boolean).join(" · ") || " ", q)}</span></span>
@@ -525,7 +609,7 @@ body.locked #btnTidy{display:none}
     if (state.sort === "company") {
       const groups = new Map();
       for (const c of list) { const k = (c.company || "").trim() || "￿"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
-      area.innerHTML = [...groups].map(([k, cs]) => `<div class="group"><div class="group-head"><h3>${k === "￿" ? "회사 미입력" : hl(k, q)}</h3><span>${cs.length}명</span></div><div class="grid">${cs.map(cardHtml).join("")}</div></div>`).join("");
+      area.innerHTML = [...groups].map(([k, cs]) => `<div class="group" style="--h:${hueOf(k === "\uffff" ? "" : k)}"><div class="group-head"><span class="mk" aria-hidden="true">${k === "\uffff" ? "?" : esc(initOf(k))}</span><h3>${k === "￿" ? "회사 미입력" : hl(k, q)}</h3><span>${cs.length}명</span></div><div class="grid">${cs.map(cardHtml).join("")}</div></div>`).join("");
     } else {
       area.innerHTML = `<div class="grid">` + list.map(cardHtml).join("") + `</div>`;
     }
@@ -570,6 +654,7 @@ body.locked #btnTidy{display:none}
         const v = cellVal(c, k);
         const inner = k === "name"
           ? (i && i.cls === "over" ? `<span class="dot" title="연락할 때가 됐어요"></span>` : "") + (v ? hl(v, q) : `<span class="muted">(이름 없음)</span>`)
+          : k === "company" && v ? `<i class="cdot" style="--h:${hueOf(v)}"></i>` + hl(v, q)
           : hl(v, q);
         return `<td${cls ? ` class="${cls}"` : ""}${v.length > 18 ? ` title="${esc(v)}"` : ""}>${inner}</td>`;
       }).join("");
