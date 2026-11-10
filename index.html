@@ -112,6 +112,18 @@ section.list{margin-top:24px}
 .seg button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 body.wide .wrap{max-width:1440px}
 .tbl-wrap{margin-top:10px;overflow:auto;max-height:calc(100vh - 140px);border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+/* 가로 스크롤: 표 위에도 스크롤 막대를 하나 더 두고(마우스 기기), 아래 막대는 항상 화면 안에 들어오게 표 높이를 맞춘다 */
+.tbl-hs{display:none;overflow-x:scroll;overflow-y:hidden;height:17px;margin-top:10px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.tbl-hs>div{height:1px}
+@media (hover:hover) and (pointer:fine){
+  .tbl-hs:not([hidden]){display:block}
+  .tbl-hs:not([hidden])+.tbl-wrap{margin-top:4px}
+  .tbl-hs::-webkit-scrollbar,.tbl-wrap::-webkit-scrollbar{width:13px;height:13px}
+  .tbl-hs::-webkit-scrollbar-thumb,.tbl-wrap::-webkit-scrollbar-thumb{background:var(--muted);border-radius:8px;border:3px solid var(--surface)}
+  .tbl-hs::-webkit-scrollbar-thumb:hover,.tbl-wrap::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+  .tbl-hs::-webkit-scrollbar-track,.tbl-wrap::-webkit-scrollbar-track,.tbl-wrap::-webkit-scrollbar-corner{background:var(--surface);border-radius:8px}
+}
+@supports not selector(::-webkit-scrollbar){.tbl-hs,.tbl-wrap{scrollbar-color:var(--muted) var(--surface)}}
 table.tbl{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;font-size:13.5px}
 .tbl th,.tbl td{padding:7px 10px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);text-align:left;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;vertical-align:top}
 .tbl th{position:sticky;top:0;z-index:2;background:var(--bg);font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none;padding-right:24px}
@@ -492,7 +504,13 @@ body.locked #btnTidy{display:none}
     }
     if (!list.length) { area.innerHTML = `<div class="empty">찾는 명함이 없습니다. 다른 검색어를 넣어 보세요.</div>`; return; }
     const q = state.q.trim();
-    if (state.view === "table") { area.innerHTML = tableHtml(list, q); return; }
+    if (state.view === "table") {
+      // 다시 그려도(정렬·동기화) 보고 있던 스크롤 위치를 유지
+      const ow = area.querySelector(".tbl-wrap"), sl = ow ? ow.scrollLeft : 0, stp = ow ? ow.scrollTop : 0;
+      area.innerHTML = tableHtml(list, q);
+      setupTableScroll(sl, stp);
+      return;
+    }
     const cardHtml = c => {
       const i = dueInfo(c);
       const hit = matchLine(c, q);
@@ -558,8 +576,35 @@ body.locked #btnTidy{display:none}
       return `<tr data-id="${esc(c.id)}" tabindex="0">${tds}</tr>`;
     }).join("");
     const ws = colWs(), wst = Object.entries(ws).map(([k, v]) => `--w-${k}:${v}px`).join(";");
-    return `<div class="tbl-wrap"><table class="tbl"${wst ? ` style="${wst}"` : ""}><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `<div class="tbl-hs" aria-hidden="true" hidden><div></div></div><div class="tbl-wrap"><table class="tbl"${wst ? ` style="${wst}"` : ""}><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
   }
+  // ---------- 표 가로 스크롤 ----------
+  // 창이 좁아 칸이 다 안 보일 때: 위쪽 스크롤 막대와 표를 서로 맞춰 움직이고,
+  // 표 높이를 화면에 맞춰 아래쪽 스크롤 막대도 항상 화면 안에 보이게 한다.
+  let tblRO = null;
+  function fitTable() {
+    const wrap = $("#listArea .tbl-wrap"), hs = $("#listArea .tbl-hs");
+    if (!wrap || !hs) return;
+    const over = wrap.scrollWidth > wrap.clientWidth + 1;
+    hs.hidden = !over;
+    hs.firstElementChild.style.width = wrap.scrollWidth + "px";
+    const sb = $(".searchbar");
+    const room = window.innerHeight - (sb ? sb.offsetHeight : 0) - (over ? hs.offsetHeight + 6 : 0) - 34;
+    wrap.style.maxHeight = Math.max(240, room) + "px";
+    if (hs.scrollLeft !== wrap.scrollLeft) hs.scrollLeft = wrap.scrollLeft;
+  }
+  function setupTableScroll(sl, stp) {
+    const wrap = $("#listArea .tbl-wrap"), hs = $("#listArea .tbl-hs");
+    if (!wrap || !hs) return;
+    wrap.addEventListener("scroll", () => { if (hs.scrollLeft !== wrap.scrollLeft) hs.scrollLeft = wrap.scrollLeft; }, { passive: true });
+    hs.addEventListener("scroll", () => { if (wrap.scrollLeft !== hs.scrollLeft) wrap.scrollLeft = hs.scrollLeft; }, { passive: true });
+    if (tblRO) tblRO.disconnect();
+    if (window.ResizeObserver) { tblRO = new ResizeObserver(fitTable); tblRO.observe(wrap.firstElementChild); tblRO.observe(wrap); }
+    fitTable();
+    wrap.scrollLeft = sl || 0; wrap.scrollTop = stp || 0; hs.scrollLeft = wrap.scrollLeft;
+  }
+  window.addEventListener("resize", fitTable);
+
   function setView(v) {
     state.view = v === "table" ? "table" : "card";
     document.body.classList.toggle("wide", state.view === "table");
