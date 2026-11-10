@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>내 명함첩</title>
 <meta name="description" content="폰으로 찍어 등록하고 PC와 폰에서 함께 관리하는 개인 명함첩">
-<meta name="theme-color" content="#0F6B62" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#D3F6EA" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#11161A" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" href="icons/icon-192.png">
@@ -26,9 +26,9 @@
 <style>
 /* Layout: one calm column like a card-index drawer; each person is a 90×50 mini card, details slide up as a sheet */
 :root{
-  --bg:#F2F4F3; --surface:#FFFFFF; --ink:#18222D; --muted:#5B6973; --line:#DCE2E0;
-  --accent:#0F6B62; --accent-ink:#FFFFFF; --accent-soft:#E0EEEB;
-  --warn:#A9531B; --warn-soft:#F7E9DE; --danger:#B3261E;
+  --bg:#F7FBFA; --surface:#FFFFFF; --ink:#1B2733; --muted:#5F6E79; --line:#DFEAE7;
+  --accent:#0A8576; --accent-ink:#FFFFFF; --accent-soft:#DDF5EF;
+  --warn:#B4551F; --warn-soft:#FFEBDD; --danger:#B3261E;
   --shadow:0 1px 2px rgba(24,34,45,.06),0 4px 14px rgba(24,34,45,.06);
   --f-body:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
   --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
@@ -284,22 +284,22 @@ body.locked #btnTidy{display:none}
 
 /* ===== 디자인 새 단장 (2026-11) =====
    회사마다 고유한 색을 정해 카드의 왼쪽 띠와 머리글자 딱지에 쓰고, 머리말은 짙은 색 띠로 강조한다 */
-:root{--paper:#FFFFFF;--head-a:#10323F;--head-b:#0F6B62;--logo-ink:#10323F}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--paper:#1D252B;--head-a:#0C1D24;--head-b:#12433E;--logo-ink:#0C1D24}}
-:root[data-theme="dark"]{--paper:#1D252B;--head-a:#0C1D24;--head-b:#12433E;--logo-ink:#0C1D24}
+:root{--paper:#FFFFFF;--head-a:#D3F6EA;--head-b:#D9EAFF;--head-c:#FFF1D6;--head-ink:#14323B;--head-sub:rgba(20,50,59,.72);--head-chip:rgba(255,255,255,.7);--head-line:rgba(20,50,59,.2);--logo:#0A8576;--logo-ink:#FFFFFF;--c-s:68%;--c-l:50%}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--paper:#1D252B;--head-a:#0C1D24;--head-b:#12433E;--head-c:#12433E;--head-ink:#FFFFFF;--head-sub:rgba(255,255,255,.86);--head-chip:rgba(255,255,255,.16);--head-line:rgba(255,255,255,.4);--logo:#FFFFFF;--logo-ink:#0C1D24;--c-s:52%;--c-l:50%}}
+:root[data-theme="dark"]{--paper:#1D252B;--head-a:#0C1D24;--head-b:#12433E;--head-c:#12433E;--head-ink:#FFFFFF;--head-sub:rgba(255,255,255,.86);--head-chip:rgba(255,255,255,.16);--head-line:rgba(255,255,255,.4);--logo:#FFFFFF;--logo-ink:#0C1D24;--c-s:52%;--c-l:50%}
 
-header.top{align-items:center;margin-top:14px;padding:18px 20px;border-radius:18px;color:#fff;
-  background:radial-gradient(120% 160% at 100% 0,rgba(255,255,255,.14) 0,rgba(255,255,255,0) 55%),linear-gradient(120deg,var(--head-a),var(--head-b));
-  box-shadow:0 10px 28px -14px rgba(16,50,63,.75)}
+header.top{align-items:center;margin-top:14px;padding:18px 20px;border-radius:18px;color:var(--head-ink);
+  background:linear-gradient(115deg,var(--head-a) 0,var(--head-b) 62%,var(--head-c) 100%);
+  border:1px solid color-mix(in srgb,var(--accent) 16%,transparent);box-shadow:0 10px 26px -18px color-mix(in srgb,var(--accent) 80%,transparent)}
 .brand{display:flex;align-items:center;gap:13px;min-width:0}
-.brand .logo{width:46px;height:46px;flex:none;color:#fff}
-header.top h1{font-size:24px;color:#fff}
-header.top .count{display:inline-block;margin-top:5px;padding:1px 10px;border-radius:999px;background:rgba(255,255,255,.16);color:rgba(255,255,255,.92);font-family:var(--f-body);font-size:12.5px;letter-spacing:0}
+.brand .logo{width:46px;height:46px;flex:none;color:var(--logo)}
+header.top h1{font-size:24px;color:var(--head-ink)}
+header.top .count{display:inline-block;margin-top:5px;padding:1px 10px;border-radius:999px;background:var(--head-chip);color:var(--head-sub);font-family:var(--f-body);font-size:12.5px;font-weight:500;letter-spacing:0}
 header.top .count:empty{display:none}
-header.top .btn.ghost{color:rgba(255,255,255,.86)}
-header.top .btn.ghost:hover{color:#fff;border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.1)}
-header.top .btn.primary,header.top #btnInstall{background:#fff;color:var(--head-a);border-color:#fff;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.18)}
-header.top .btn:focus-visible{outline-color:#fff}
+header.top .btn.ghost{color:var(--head-sub)}
+header.top .btn.ghost:hover{color:var(--head-ink);border-color:var(--head-line);background:var(--head-chip)}
+header.top .btn.primary,header.top #btnInstall{font-weight:700;box-shadow:0 4px 12px -4px color-mix(in srgb,var(--accent) 70%,transparent)}
+header.top .btn:focus-visible{outline-color:var(--head-ink)}
 
 .searchbar{padding-block:12px 6px}
 .qbox input,.search select,.seg{box-shadow:0 1px 2px rgba(24,34,45,.05)}
@@ -310,7 +310,7 @@ header.top .btn:focus-visible{outline-color:#fff}
 .label::before{content:"";width:4px;height:14px;border-radius:2px;background:var(--accent)}
 
 /* 회사 색: --h(색상 각도)에서 띠·딱지 색을 만든다 */
-.card,.group,.due-row,.cdot{--c:hsl(var(--h,172) 52% 44%)}
+.card,.group,.due-row,.cdot{--c:hsl(var(--h,172) var(--c-s) var(--c-l))}
 .mk{flex:none;display:inline-grid;place-items:center;width:26px;height:26px;border-radius:8px;font-size:13px;font-weight:700;line-height:1;
   background:color-mix(in srgb,var(--c) 17%,var(--surface));color:color-mix(in srgb,var(--c) 72%,var(--ink))}
 
