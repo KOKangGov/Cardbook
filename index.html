@@ -370,6 +370,22 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
   header.top .actions .btn{flex:none;padding:7px 9px;font-size:13.5px}
   header.top .btn.primary{margin-left:auto;position:sticky;right:0;padding:7px 12px;box-shadow:-10px 0 10px -4px var(--head-b),0 4px 12px -4px color-mix(in srgb,var(--accent) 70%,transparent)}
 }
+
+/* ===== 팀 명함첩 (2026-11) ===== */
+.scope{display:flex;gap:6px;margin-top:12px}
+.scope button{flex:1 1 0;max-width:220px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:8px 14px;font:inherit;font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap}
+.scope button[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+.scope .n{opacity:.85;font-weight:400;margin-left:5px;font-size:13px}
+.card .by{display:block;font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.card .tmk{position:absolute;top:9px;right:26px;font-size:10.5px;font-weight:700;line-height:16px;padding:0 6px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+.btn.on-team{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.note-box{border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:10px 12px;font-size:13.5px;line-height:1.6;margin-top:10px}
+.note-box b{color:var(--ink)}
+.mem-list{display:grid;gap:6px;margin-top:8px}
+.mem-row{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:14px;min-width:0}
+.mem-row span{overflow-wrap:anywhere}
+.steps{margin:8px 0 0;padding-left:20px;font-size:14px;line-height:1.7}
+.tag-sub{font-size:12px;color:var(--muted)}
 </style>
 
 </head>
@@ -396,6 +412,11 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
   <div class="banner" id="banner" hidden></div>
   <div class="drive-note" id="tidyNote" role="status" hidden></div>
   <div class="gate" id="gate" hidden></div>
+
+  <div class="scope" id="scope" role="tablist" aria-label="명함첩 고르기" hidden>
+    <button type="button" role="tab" data-scope="me" aria-selected="true">내 명함첩<span class="n" id="nMe"></span></button>
+    <button type="button" role="tab" data-scope="team" aria-selected="false">팀 명함첩<span class="n" id="nTeam"></span></button>
+  </div>
 
   <div class="searchbar">
     <div class="search">
@@ -456,7 +477,9 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
   ];
   const LABEL = Object.fromEntries(FIELDS);
 
-  const state = { mine: [], cards: [], q: "", tag: "", sort: "company", view: "card", tk: "", tdir: 1, mode: "loading", loaded: false };
+  const state = { mine: [], cards: [], team: [], teamG: [], scope: "me", q: "", tag: "", sort: "company", view: "card", tk: "", tdir: 1, mode: "loading", loaded: false };
+  // 팀 명함첩: teams/main (팀 정보·멤버), teams/main/cards (공유된 명함), teams/main/photos (공유된 사진)
+  let teamRef = null, teamCards = null, teamPhotos = null, teamInfo = null, teamStat = "off", teamLoaded = false, teamFixed = false, teamSrv = false, unsubTeam = null, unsubTeamCards = null;
   let db = null, uid = null, vault = null, cardsCol = null, photosCol = null, downloads = null, imageOK = true, installEvt = null;
   const local = { photos: {} };
   let tidyBusy = false;
@@ -473,9 +496,13 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
     async save(id, data) {
       if (state.mode !== "db") { const arr = data.mine ? state.mine : state.cards; const i = arr.findIndex(c => c.id === id); const row = { ...data, id }; if (i >= 0) arr[i] = row; else arr.push(row); render(); return; }
       await settle(cardsCol.doc(id).set(data));
+      // 팀에 공유한 명함이면 팀 명함첩에도 같은 내용으로 반영 (연결 방식)
+      if (data.team && !data.mine) teamPush(id, data).catch(() => toast("팀 명함첩에 반영하지 못했습니다. 잠시 후 다시 열어 주세요"));
     },
     async del(id) {
       if (state.mode !== "db") { state.cards = state.cards.filter(c => c.id !== id); state.mine = state.mine.filter(c => c.id !== id); delete local.photos[id]; render(); return; }
+      const c = getCard(id);
+      if (c && c.team) teamPull(id).catch(() => {});
       photosCol.doc(id).delete().catch(() => {});
       await settle(cardsCol.doc(id).delete());
     },
@@ -486,9 +513,188 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
     async photoSet(id, dataUrl) {
       if (state.mode !== "db") { local.photos[id] = dataUrl; return; }
       await settle(photosCol.doc(id).set({ data: dataUrl }));
+      const c = getCard(id);
+      if (c && c.team && c.team.photo) teamPhotoPush(id, dataUrl).catch(() => {});
     },
     newId() { return cardsCol ? cardsCol.doc().id : "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
   };
+
+  // ---------- 팀 명함첩 ----------
+  // 공유하는 항목. 메모·연락 기록·다음 연락일·만난 곳/날은 개인 정보라 공유하지 않습니다.
+  const SHARE_KEYS = ["name", "company", "dept", "title", "mobile", "phone", "fax", "email", "address", "website", "tags"];
+  const tid = id => uid + "_" + id;
+  const myEmail = () => String((me && me.email) || "").trim().toLowerCase();
+  const teamOn = () => state.mode === "db" && teamStat === "ok" && !!teamCards;
+  const isTeamOwner = () => !!(teamInfo && me && String(teamInfo.owner || "").toLowerCase() === myEmail());
+  const teamDocOf = id => state.team.find(d => d.tid === tid(id));
+  function teamPush(id, data) {
+    if (!teamOn()) return Promise.resolve();
+    const doc = { by: uid, byName: (me && me.displayName) || "", byEmail: myEmail(), src: id, hasPhoto: !!(data.team && data.team.photo && data.hasPhoto), sharedAt: (data.team && data.team.at) || Date.now(), updatedAt: data.updatedAt || Date.now() };
+    for (const k of SHARE_KEYS) doc[k] = k === "tags" ? [...(data.tags || [])] : String(data[k] || "");
+    return settle(teamCards.doc(tid(id)).set(doc));
+  }
+  function teamPull(id) {
+    if (!teamOn()) return Promise.resolve();
+    teamPhotos.doc(tid(id)).delete().catch(() => {});
+    return settle(teamCards.doc(tid(id)).delete());
+  }
+  function teamPhotoPush(id, dataUrl) {
+    if (!teamOn()) return Promise.resolve();
+    return settle(teamPhotos.doc(tid(id)).set({ data: dataUrl }));
+  }
+  const sharerName = d => d.by === uid ? "나" : (d.byName || d.byEmail || "팀원");
+  // 같은 사람을 여러 명이 공유하면 하나로 묶어 보여 줌 (휴대폰 · 이메일 · 이름+회사가 같으면 같은 사람)
+  function groupTeam() {
+    const groups = [], keyMap = new Map();
+    const docs = state.team.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    for (const d of docs) {
+      const keys = [];
+      const m = digits(d.mobile); if (m.length >= 9) keys.push("m" + m);
+      const e = String(d.email || "").trim().toLowerCase(); if (e) keys.push("e" + e);
+      const n = normV("name", d.name), co = normCo(d.company); if (n.length >= 2 && co.length >= 2) keys.push("n" + n + "|" + co);
+      let g = null;
+      for (const k of keys) if (keyMap.has(k)) { g = keyMap.get(k); break; }
+      if (!g) {
+        g = { id: "t:" + d.tid, isTeam: true, docs: [], createdAt: d.sharedAt || d.updatedAt || 0, updatedAt: d.updatedAt || 0, tags: [] };
+        for (const k of SHARE_KEYS) if (k !== "tags") g[k] = d[k] || "";
+        groups.push(g);
+      }
+      g.docs.push(d);
+      for (const k of SHARE_KEYS) if (k !== "tags" && !g[k] && d[k]) g[k] = d[k];
+      g.tags = [...new Set([...g.tags, ...(d.tags || [])])];
+      if (!g.photoTid && d.hasPhoto) { g.photoTid = d.tid; g.hasPhoto = true; }
+      g.createdAt = Math.min(g.createdAt || Infinity, d.sharedAt || d.updatedAt || Infinity);
+      for (const k of keys) keyMap.set(k, g);
+    }
+    for (const g of groups) {
+      g.docs.sort((a, b) => (a.sharedAt || 0) - (b.sharedAt || 0));
+      const names = g.docs.map(sharerName);
+      g.byLine = names.length > 1 ? `${names[0]} 외 ${names.length - 1}명` : names[0];
+    }
+    state.teamG = groups;
+  }
+  // 팀 명함첩 연결: 팀 정보를 보고, 멤버면 공유 명함을 실시간으로 받음
+  function stopTeam() {
+    if (unsubTeam) { unsubTeam(); unsubTeam = null; }
+    if (unsubTeamCards) { unsubTeamCards(); unsubTeamCards = null; }
+    teamInfo = null; teamStat = "off"; teamLoaded = false; teamFixed = false; teamSrv = false; state.team = []; state.teamG = [];
+  }
+  function startTeam(fdb) {
+    stopTeam();
+    teamRef = fdb.collection("teams").doc("main");
+    teamCards = teamRef.collection("cards");
+    teamPhotos = teamRef.collection("photos");
+    teamStat = "loading";
+    unsubTeam = teamRef.onSnapshot(s => {
+      teamInfo = s.exists ? s.data() : null;
+      teamStat = s.exists ? "ok" : "none";
+      if (teamStat === "ok" && !unsubTeamCards) {
+        unsubTeamCards = teamCards.onSnapshot({ includeMetadataChanges: true }, snap => {
+          state.team = snap.docs.map(x => ({ ...x.data(), tid: x.id }));
+          teamLoaded = true; groupTeam(); render();
+          if (!snap.metadata.fromCache) { teamSrv = true; fixTeam(); }
+          if (!sheet.hidden && String(sheet.dataset.id || "").startsWith("t:") && !getCard(sheet.dataset.id) && $("#teamDetail")) closeSheet();
+        }, () => { state.team = []; state.teamG = []; render(); });
+      }
+      if (teamStat !== "ok" && unsubTeamCards) { unsubTeamCards(); unsubTeamCards = null; state.team = []; state.teamG = []; }
+      render(); refreshAccount();
+    }, err => {
+      teamStat = err && err.code === "permission-denied" ? "rules" : "error";
+      teamInfo = null; render(); refreshAccount();
+    });
+  }
+  // 앱을 열 때 한 번: 다른 기기에서 고친 공유 명함이 팀에 덜 반영됐으면 다시 올리고,
+  // 관리자가 팀에서 내린 명함은 내 쪽 '공유 중' 표시를 끔
+  async function fixTeam() {
+    if (teamFixed || !teamSrv || !state.loaded || !teamOn()) return;
+    teamFixed = true;
+    for (const c of state.cards.filter(x => x.team)) {
+      const d = teamDocOf(c.id);
+      try {
+        if (!d) { const { id: _, team: __, ...rest } = c; await store.save(c.id, rest); }
+        else if ((d.updatedAt || 0) < (c.updatedAt || 0)) await teamPush(c.id, c);
+      } catch {}
+    }
+  }
+  async function teamShare(id, photo) {
+    const c = getCard(id); if (!c || c.mine || !teamOn()) return;
+    const { id: _, ...rest } = c;
+    const team = { photo: !!(photo && c.hasPhoto), at: (c.team && c.team.at) || Date.now() };
+    const next = { ...rest, team, updatedAt: Date.now() };
+    await store.save(id, next);
+    if (state.mode === "db") Object.assign(c, { team, updatedAt: next.updatedAt });
+    if (team.photo) { const src = await store.photoGet(id); if (src) await teamPhotoPush(id, src); }
+    else teamPhotos.doc(tid(id)).delete().catch(() => {});
+  }
+  async function teamUnshare(id) {
+    const c = getCard(id);
+    if (c && c.team) {
+      const { id: _, team: __, ...rest } = c;
+      await store.save(id, { ...rest, updatedAt: Date.now() });
+      delete c.team;
+    }
+    await teamPull(id);
+  }
+  async function teamImport(id) {
+    const g = getCard(id); if (!g || !g.isTeam) return;
+    const from = g.docs.find(d => d.by !== uid) || g.docs[0];
+    const nid = store.newId(), now = Date.now();
+    const data = { createdAt: now, updatedAt: now, nextContact: "", memo: "", metAt: "", metDate: "", hasPhoto: false,
+      log: [{ k: now.toString(36), d: today(), t: `팀 명함첩에서 가져옴 (공유: ${from.byName || from.byEmail || "팀원"})` }] };
+    for (const k of SHARE_KEYS) data[k] = k === "tags" ? [...(g.tags || [])] : (g[k] || "");
+    try {
+      if (g.photoTid) {
+        const s = await teamPhotos.doc(g.photoTid).get().catch(() => null);
+        const p = s && s.exists ? s.data().data : null;
+        if (p) { await store.photoSet(nid, p); data.hasPhoto = true; data.photoCut = true; }
+      }
+      await store.save(nid, data);
+      if (state.mode === "db" && !getCard(nid)) state.cards.push({ ...data, id: nid });
+      toast("내 명함첩에 가져왔습니다. 메모와 연락 기록은 여기서 따로 남길 수 있어요");
+      render(); showDetail(nid);
+    } catch (e) { toast(errText(e)); }
+  }
+  // 보안 규칙: 관리자 이메일 + 팀 멤버만 앱 사용, 팀 명함은 공유한 사람만 수정
+  function rulesText(owner) {
+    return `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 팀 관리자(앱 주인)의 구글 이메일 — 소문자로 적습니다.
+    function ownerEmail() { return "${owner}"; }
+
+    function signedIn() { return request.auth != null && request.auth.token.email != null && request.auth.token.email_verified == true; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function isOwner() { return signedIn() && myEmail() == ownerEmail(); }
+    function teamPath() { return /databases/$(database)/documents/teams/main; }
+    function isMember() { return signedIn() && exists(teamPath()) && myEmail() in get(teamPath()).data.members; }
+    // 관리자와 팀 멤버로 등록된 사람만 앱을 쓸 수 있습니다.
+    function allowed() { return isOwner() || isMember(); }
+    function myShare(id) { return id.matches(request.auth.uid + '_.+'); }
+
+    // 각자의 명함은 본인만 읽고 씁니다.
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid && allowed();
+    }
+    // 팀 정보(이름·멤버)는 멤버가 보고, 관리자만 바꿉니다.
+    match /teams/main {
+      allow read: if allowed();
+      allow write: if isOwner();
+    }
+    // 팀 명함: 멤버 모두 보고, 공유한 사람만 올리고 고칩니다. 관리자는 내릴 수 있습니다.
+    match /teams/main/cards/{id} {
+      allow read: if allowed();
+      allow create, update: if allowed() && myShare(id) && request.resource.data.by == request.auth.uid;
+      allow delete: if allowed() && (myShare(id) || isOwner());
+    }
+    match /teams/main/photos/{id} {
+      allow read: if allowed();
+      allow create, update: if allowed() && myShare(id);
+      allow delete: if allowed() && (myShare(id) || isOwner());
+    }
+  }
+}
+`;
+  }
 
   // ---------- 전화번호 자동 하이픈 ----------
   // 010-1234-5678 · 02-123-4567 · 02-1234-5678 · 042-123-4567 · 070-1234-5678 · 0505-123-4567 · 1588-1234
@@ -533,7 +739,8 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
   });
 
   // 내 명함은 같은 저장소에 mine 표시로 저장하고, 목록·검색·내보내기에서는 뺍니다.
-  const getCard = id => state.cards.find(x => x.id === id) || state.mine.find(x => x.id === id);
+  const getCard = id => String(id || "").startsWith("t:") ? state.teamG.find(x => x.id === id) : (state.cards.find(x => x.id === id) || state.mine.find(x => x.id === id));
+  const curCards = () => state.scope === "team" ? state.teamG : state.cards;
   const isMine = id => state.mine.some(x => x.id === id);
 
   function errText(e) {
@@ -552,7 +759,7 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
   function filtered() {
     const q = state.q.trim().toLowerCase();
     const qd = digits(q);
-    let list = state.cards.filter(c => {
+    let list = curCards().filter(c => {
       if (state.tag && !(c.tags || []).includes(state.tag)) return false;
       if (!q) return true;
       if (cardText(c).includes(q)) return true;
@@ -575,24 +782,33 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
   }
 
   function render() {
-    const n = state.cards.length;
-    $("#count").textContent = !state.loaded ? "불러오는 중…" : `명함 ${n.toLocaleString("ko-KR")}장`;
+    // 팀 명함첩 탭: 팀에 들어가 있을 때만 보임
+    const hasTeam = teamStat === "ok";
+    if (!hasTeam && state.scope === "team") { state.scope = "me"; state.tag = ""; }
+    const isT = state.scope === "team";
+    $("#scope").hidden = !hasTeam;
+    document.querySelectorAll("#scope [data-scope]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.scope === state.scope)));
+    $("#nMe").textContent = state.loaded ? state.cards.length.toLocaleString("ko-KR") : "";
+    $("#nTeam").textContent = teamLoaded ? state.teamG.length.toLocaleString("ko-KR") : "";
+    const n = curCards().length;
+    $("#count").textContent = !state.loaded ? "불러오는 중…" : isT ? `팀 명함 ${n.toLocaleString("ko-KR")}장${teamInfo && teamInfo.name ? " · " + teamInfo.name : ""}` : `명함 ${n.toLocaleString("ko-KR")}장`;
     if (!tidyBusy) $("#btnTidy").hidden = !state.cards.some(c => c.hasPhoto && !c.photoCut);
 
-    const allTags = [...new Set(state.cards.flatMap(c => c.tags || []))].sort((a, b) => a.localeCompare(b, "ko"));
+    const allTags = [...new Set(curCards().flatMap(c => c.tags || []))].sort((a, b) => a.localeCompare(b, "ko"));
     if (state.tag && !allTags.includes(state.tag)) state.tag = "";
     $("#chips").innerHTML = allTags.length ? [`<button class="chip ${state.tag ? "" : "on"}" data-tag="" type="button">전체</button>`]
       .concat(allTags.map(t => `<button class="chip ${state.tag === t ? "on" : ""}" data-tag="${esc(t)}" type="button">#${esc(t)}</button>`)).join("") : "";
 
-    const due = state.cards.map(c => ({ c, i: dueInfo(c) })).filter(x => x.i).sort((a, b) => a.i.d - b.i.d);
+    const due = isT ? [] : state.cards.map(c => ({ c, i: dueInfo(c) })).filter(x => x.i).sort((a, b) => a.i.d - b.i.d);
     $("#due").hidden = !due.length;
     $("#dueList").innerHTML = due.slice(0, 8).map(({ c, i }) =>
       `<button class="due-row" data-id="${esc(c.id)}" type="button" style="--h:${hueOf(c.company || c.name)}"><span class="mk" aria-hidden="true">${esc(initOf(c.name || c.company))}</span><span class="who"><strong>${esc(c.name || "(이름 없음)")}</strong> <span class="sub">${esc([c.company, c.title].filter(Boolean).join(" · "))}</span></span><span class="pill ${i.cls}">${i.text}</span></button>`).join("");
 
     const list = filtered();
-    $("#listLabel").textContent = state.q || state.tag ? `검색 결과 ${list.length}장` : "전체 명함";
+    $("#listLabel").textContent = state.q || state.tag ? `검색 결과 ${list.length}장` : isT ? "팀에 공유된 명함" : "전체 명함";
     const area = $("#listArea");
-    if (!state.loaded) { area.innerHTML = `<div class="empty">명함첩을 여는 중입니다…</div>`; return; }
+    if (!state.loaded || (isT && !teamLoaded)) { area.innerHTML = `<div class="empty">명함첩을 여는 중입니다…</div>`; return; }
+    if (!n && isT) { area.innerHTML = `<div class="empty"><strong>아직 팀에 공유된 명함이 없습니다</strong>내 명함첩에서 명함을 열고 <b>팀에 공유</b>를 누르면 여기에 올라갑니다. 메모와 연락 기록은 공유되지 않아요.</div>`; return; }
     if (!n) {
       area.innerHTML = `<div class="empty"><strong>아직 등록된 명함이 없습니다</strong>명함 사진을 올리면 이름·회사·연락처를 자동으로 채워 드립니다. 리멤버에서 내보낸 엑셀 파일도 한 번에 가져올 수 있어요.<div class="actions"><button class="btn primary" data-act="pick" type="button">+ 첫 명함 추가</button><button class="btn" data-act="import" type="button">리멤버 엑셀 가져오기</button></div></div>`;
       return;
@@ -612,8 +828,9 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
       return `<button class="card" data-id="${esc(c.id)}" type="button" style="--h:${hueOf(c.company || c.name)}">
         <span class="mk" aria-hidden="true">${esc(initOf(c.company || c.name))}</span>
         ${i && i.cls === "over" ? `<span class="dot" title="연락할 때가 됐어요"></span>` : ""}
+        ${c.team && !isT ? `<span class="tmk" title="팀 명함첩에 공유 중">팀</span>` : ""}
         <span class="co">${hl(c.company || " ", q)}</span>
-        <span><span class="nm" style="display:block">${hl(c.name || "(이름 없음)", q)}</span><span class="tt" style="display:block">${hl([c.dept, c.title].filter(Boolean).join(" · ") || " ", q)}</span></span>
+        <span><span class="nm" style="display:block">${hl(c.name || "(이름 없음)", q)}</span><span class="tt" style="display:block">${hl([c.dept, c.title].filter(Boolean).join(" · ") || " ", q)}</span>${isT ? `<span class="by">공유 · ${esc(c.byLine || "")}</span>` : ""}</span>
         ${hit ? `<span class="hit">${hit}</span>` : `<span class="ph">${hl(c.mobile || c.phone || c.email || " ", q)}</span>`}
         ${c.hasPhoto && !hit ? `<span class="cam">PHOTO</span>` : ""}
       </button>`;
@@ -804,6 +1021,7 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
 
   // ---------- detail ----------
   function showDetail(id, opt = {}) {
+    if (String(id || "").startsWith("t:")) return showTeamDetail(id);
     const c = getCard(id); if (!c) return;
     const rows = [["mobile", 1], ["phone", 1], ["fax", 1], ["email", 0], ["address", 0], ["website", 0]].filter(([k]) => c[k]);
     const met = [c.metDate, c.metAt].filter(Boolean).join(" · ");
@@ -817,7 +1035,7 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
       ${c.hasPhoto ? `<div class="photo" id="photoBox">사진 불러오는 중…</div>` : ""}
       <div class="big-name">${esc(c.name || "(이름 없음)")}</div>
       <div class="sub">${esc([c.company, c.dept, c.title].filter(Boolean).join(" · "))}</div>
-      <div class="row" style="margin-top:12px"><button class="btn primary" data-act="share" type="button">이 명함 전달하기</button></div>
+      <div class="row" style="margin-top:12px"><button class="btn primary" data-act="share" type="button">이 명함 전달하기</button>${teamOn() ? `<button class="btn ${c.team ? "on-team" : ""}" data-act="teamshareopen" type="button">${c.team ? "✓ 팀 공유 중" : "팀에 공유"}</button>` : ""}</div>
       ${rows.length ? `<dl class="info">${rows.map(([k, m]) => `<dt>${LABEL[k]}</dt><dd class="${m ? "mono" : ""}">${esc(c[k])}</dd><button class="copy" data-copy="${esc(c[k])}" type="button">복사</button>`).join("")}</dl>` : ""}
       ${met ? `<div class="sub" style="font-size:14px">만남 · ${esc(met)}</div>` : ""}
       ${(c.tags || []).length ? `<div class="tags" style="margin-top:10px">${c.tags.map(t => `<span class="tag">#${esc(t)}</span>`).join("")}</div>` : ""}
@@ -858,6 +1076,49 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
     const nx = $("#nx_cam");
     if (nx) nx.addEventListener("change", e => { const f = e.target.files[0]; if (!f) return; showEdit(null); pickPhoto(f, { read: true }); });
     if (c.hasPhoto) store.photoGet(id).then(src => { const b = $("#photoBox"); if (!b) return; b.innerHTML = src ? `<img alt="${esc(c.name)} 명함 사진" src="${src}">` : "사진이 없습니다"; }).catch(() => { const b = $("#photoBox"); if (b) b.textContent = "사진을 불러오지 못했습니다"; });
+  }
+
+  // 팀 명함 보기: 팀원은 보기 · 전달 · 내 명함첩으로 가져오기만 (수정은 공유한 사람이 원본에서)
+  function showTeamDetail(id) {
+    const g = getCard(id); if (!g) return;
+    const rows = [["mobile", 1], ["phone", 1], ["fax", 1], ["email", 0], ["address", 0], ["website", 0]].filter(([k]) => g[k]);
+    const have = findMatches(g).find(x => x.sc >= 4);
+    const owner = isTeamOwner();
+    openSheet(`
+      <div class="sheet-head"><h2>팀 명함</h2><button class="btn ghost" data-act="close" type="button">닫기</button></div>
+      <div id="teamDetail"></div>
+      ${g.hasPhoto ? `<div class="photo" id="photoBox">사진 불러오는 중…</div>` : ""}
+      <div class="big-name">${esc(g.name || "(이름 없음)")}</div>
+      <div class="sub">${esc([g.company, g.dept, g.title].filter(Boolean).join(" · "))}</div>
+      <div class="row" style="margin-top:12px">
+        ${have ? `<button class="btn" data-act="mineopen" data-id="${esc(have.c.id)}" type="button">✓ 내 명함첩에 있음 · 열기</button>` : `<button class="btn primary" data-act="teamimport" type="button">내 명함첩으로 가져오기</button>`}
+        <button class="btn" data-act="share" type="button">이 명함 전달하기</button>
+      </div>
+      ${rows.length ? `<dl class="info">${rows.map(([k, m]) => `<dt>${LABEL[k]}</dt><dd class="${m ? "mono" : ""}">${esc(g[k])}</dd><button class="copy" data-copy="${esc(g[k])}" type="button">복사</button>`).join("")}</dl>` : ""}
+      ${(g.tags || []).length ? `<div class="tags" style="margin-top:10px">${g.tags.map(t => `<span class="tag">#${esc(t)}</span>`).join("")}</div>` : ""}
+      <div class="block">
+        <div class="label">공유한 사람</div>
+        <div class="log" style="margin-top:8px">${g.docs.map(d => `<div class="log-item"><time>${d.sharedAt ? ymd(new Date(d.sharedAt)) : ""}</time><span>${esc(sharerName(d))}${d.by !== uid && d.byEmail ? ` <span class="tag-sub">${esc(d.byEmail)}</span>` : ""}</span>${d.by === uid ? `<button class="copy" data-act="teamunshare" data-src="${esc(d.src)}" type="button">공유 해제</button>` : owner ? `<button class="copy" data-act="teamremove" data-tid="${esc(d.tid)}" type="button">팀에서 내리기</button>` : "<span></span>"}</div>`).join("")}</div>
+        <p class="help">팀 명함은 공유한 사람만 고칠 수 있고, 원본을 고치면 여기에도 자동으로 반영됩니다. 메모·연락 기록·다음 연락일은 공유되지 않습니다. 내 메모를 남기려면 <b>내 명함첩으로 가져오기</b>를 누르세요.</p>
+      </div>`);
+    sheet.dataset.id = id;
+    if (g.photoTid) teamPhotos.doc(g.photoTid).get().then(s => { const b = $("#photoBox"); if (!b) return; const src = s.exists ? s.data().data : null; b.innerHTML = src ? `<img alt="${esc(g.name)} 명함 사진" src="${src}">` : "사진이 없습니다"; }).catch(() => { const b = $("#photoBox"); if (b) b.textContent = "사진을 불러오지 못했습니다"; });
+  }
+  // 내 명함을 팀에 공유 / 공유 설정 바꾸기 / 해제
+  function showTeamShare(id) {
+    const c = getCard(id); if (!c || !teamOn()) return;
+    openSheet(`
+      <div class="sheet-head"><h2>${c.team ? "팀 공유 설정" : "팀에 공유"}</h2><button class="btn ghost" data-act="back" type="button">돌아가기</button></div>
+      <p class="help" style="margin-top:0"><b>${esc(c.name || c.company || "")}</b>님 명함을 <b>${esc((teamInfo && teamInfo.name) || "팀")}</b> 팀 명함첩에 ${c.team ? "공유하고 있습니다." : "올립니다."}</p>
+      <div class="note-box">
+        <b>공유되는 것</b> · 이름, 회사, 부서, 직책, 휴대폰, 전화, 팩스, 이메일, 주소, 웹사이트, 태그<br>
+        <b>공유되지 않는 것</b> · 메모, 연락 기록, 다음 연락일, 만난 곳·날
+      </div>
+      ${c.hasPhoto ? `<label class="check"><input type="checkbox" id="tsPhoto" ${c.team && c.team.photo ? "checked" : ""}> 명함 사진도 공유</label>` : ""}
+      <p class="help" style="margin-top:12px">공유한 뒤 이 명함을 고치면 팀 명함첩에도 자동으로 반영됩니다. 팀원은 보기와 <b>내 명함첩으로 가져오기</b>만 할 수 있어요.</p>
+      <div class="status" id="tsStatus"></div>
+      <div class="footer-actions">${c.team ? `<button class="btn danger" data-act="teamunshare" data-src="${esc(id)}" type="button">공유 해제</button>` : "<span></span>"}<button class="btn primary" data-act="teamshare" type="button">${c.team ? "설정 저장" : "공유하기"}</button></div>`);
+    sheet.dataset.id = id;
   }
 
   function loadPhoto(c) {
@@ -2106,10 +2367,12 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
     if (tr) { if (String(window.getSelection() || "").length) return; return showDetail(tr.dataset.id); }
     const t = e.target.closest("button,[data-act]"); if (!t) return;
     if (t.dataset.view) { setView(t.dataset.view); render(); return; }
+    if (t.dataset.scope) { if (state.scope !== t.dataset.scope) { state.scope = t.dataset.scope; state.tag = ""; render(); } return; }
     if (t.id === "btnLogin") return signIn();
     if (t.id === "btnAccount") return showAccount();
     if (t.id === "btnInstall") return doInstall();
     if (t.dataset.act === "signout") { closeSheet(); return firebase.auth().signOut(); }
+    if (t.dataset.act === "retry") return location.reload();
     if (t.dataset.act === "sharenative") return shareNative(false);
     if (t.dataset.act === "sharenativeimg") return shareNative(true);
     if (t.dataset.act === "pick") return showPicker();
@@ -2149,11 +2412,48 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
       case "shareimg": return shareImage(id);
       case "save": return saveEdit();
       case "doimport": return doImport();
-      case "askdel": $("#delWrap").innerHTML = `<span class="row"><span class="sub" style="font-size:14px">정말 삭제할까요?</span><button class="btn danger" data-act="del" type="button">삭제</button><button class="btn ghost" data-act="nodel" type="button">취소</button></span>`; return;
+      case "askdel": $("#delWrap").innerHTML = `<span class="row"><span class="sub" style="font-size:14px">정말 삭제할까요?${c && c.team ? " 팀 명함첩에서도 내려갑니다." : ""}</span><button class="btn danger" data-act="del" type="button">삭제</button><button class="btn ghost" data-act="nodel" type="button">취소</button></span>`; return;
       case "nodel": $("#delWrap").innerHTML = `<button class="btn danger" data-act="askdel" type="button">삭제</button>`; return;
       case "del":
         try { const wasMine = isMine(id); await store.del(id); state.cards = state.cards.filter(x => x.id !== id); state.mine = state.mine.filter(x => x.id !== id); render(); if (wasMine) showAccount(); else closeSheet(); toast("삭제했습니다"); } catch (er) { toast(errText(er)); }
         return;
+      case "teamshareopen": return showTeamShare(id);
+      case "teamshare": {
+        if (!c) return;
+        const st = $("#tsStatus"); if (st) { st.className = "status"; st.textContent = "공유하는 중…"; }
+        sheet.querySelectorAll("button").forEach(b => b.disabled = true);
+        const was = !!c.team;
+        try { await teamShare(id, $("#tsPhoto") ? $("#tsPhoto").checked : false); toast(was ? "공유 설정을 저장했습니다" : "팀 명함첩에 공유했습니다"); render(); showDetail(id); }
+        catch (er) { if (st) { st.className = "status err"; st.textContent = errText(er); } sheet.querySelectorAll("button").forEach(b => b.disabled = false); }
+        return;
+      }
+      case "teamunshare": {
+        const src = t.dataset.src;
+        if (t.dataset.sure !== "1") { t.dataset.sure = "1"; t.textContent = "정말 해제할까요?"; return; }
+        t.disabled = true;
+        try { await teamUnshare(src); toast("팀 공유를 해제했습니다"); render(); if (String(id || "").startsWith("t:")) closeSheet(); else showDetail(src); }
+        catch (er) { toast(errText(er)); t.disabled = false; }
+        return;
+      }
+      case "teamremove": {
+        if (t.dataset.sure !== "1") { t.dataset.sure = "1"; t.textContent = "정말 내릴까요?"; return; }
+        t.disabled = true;
+        try { teamPhotos.doc(t.dataset.tid).delete().catch(() => {}); await settle(teamCards.doc(t.dataset.tid).delete()); toast("팀 명함첩에서 내렸습니다"); }
+        catch (er) { toast(errText(er)); t.disabled = false; }
+        return;
+      }
+      case "teamimport": return teamImport(id);
+      case "teamcreate": return teamCreate();
+      case "teamaddmem": return teamAddMember();
+      case "teamdelmem": {
+        if (t.dataset.sure !== "1") { t.dataset.sure = "1"; t.textContent = "정말 뺄까요?"; return; }
+        t.disabled = true;
+        try { await teamRef.update({ members: firebase.firestore.FieldValue.arrayRemove(t.dataset.em) }); toast("팀원에서 뺐습니다"); }
+        catch (er) { toast(errText(er)); t.disabled = false; }
+        return;
+      }
+      case "teamrules": try { await navigator.clipboard.writeText(rulesText(myEmail())); toast("보안 규칙을 복사했습니다. Firebase 규칙 화면에 붙여 넣고 ‘게시’를 누르세요"); } catch { const ta = $("#rulesBox"); if (ta) { ta.hidden = false; ta.select(); toast("규칙을 선택했습니다. 복사해 주세요"); } } return;
+      case "teaminvite": try { await navigator.clipboard.writeText(inviteText()); toast("안내 문구를 복사했습니다. 카카오톡이나 메일로 보내세요"); } catch { toast("복사하지 못했습니다"); } return;
       case "addlog": {
         if (!c) return;
         const txt = $("#logText").value.trim(); const d = $("#logDate").value || today();
@@ -2262,6 +2562,78 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
         : `로그인하지 못했습니다. (${c || "알 수 없는 오류"})`;
     }
   }
+  // ---------- 팀 관리 (계정 화면) ----------
+  const appUrl = () => location.origin + location.pathname.replace(/index\.html$/, "");
+  function inviteText() {
+    return `[내 명함첩] ${(teamInfo && teamInfo.name) || "팀"} 팀 명함첩에 초대합니다.
+
+1) 크롬(PC는 크롬·엣지)에서 아래 주소를 엽니다.
+${appUrl()}
+2) 관리자에게 알려 준 구글 계정으로 로그인합니다.
+3) 폰은 크롬 메뉴(⋮) → '홈 화면에 추가' 또는 '앱 설치'를 누르면 앱처럼 쓸 수 있습니다.
+
+· 내 명함은 나만 보고, '팀에 공유'를 누른 명함만 팀 명함첩에 올라갑니다.
+· 반드시 위 주소로만 설치하세요. 설치에 결제는 전혀 없습니다.`;
+  }
+  function teamBlockHtml() {
+    const consoleUrl = `https://console.firebase.google.com/project/${encodeURIComponent((window.FIREBASE_CONFIG || {}).projectId || "")}/firestore/rules`;
+    const rulesSteps = `<ol class="steps">
+        <li><button class="btn" data-act="teamrules" type="button">보안 규칙 복사</button> <span class="tag-sub">(관리자: ${esc(myEmail())})</span></li>
+        <li><a href="${consoleUrl}" target="_blank" rel="noopener">Firebase 규칙 화면</a>을 열고, 들어 있는 내용을 모두 지운 뒤 붙여 넣고 <b>게시</b>를 누릅니다.</li>
+        <li>1분쯤 뒤 이 앱을 <b>새로고침</b>하고 다시 <b>계정</b>을 엽니다.</li>
+      </ol>
+      <textarea id="rulesBox" rows="6" readonly hidden style="width:100%;margin-top:8px;font-family:var(--f-mono);font-size:12px">${esc(rulesText(myEmail()))}</textarea>`;
+    if (teamStat === "loading" || teamStat === "off") return `<div class="label">팀 명함첩</div><p class="help">팀 정보를 불러오는 중…</p>`;
+    if (teamStat === "rules" || teamStat === "error") return `<div class="label">팀 명함첩</div>
+      <p class="help">팀원과 명함을 나눠 보려면, 앱 관리자가 처음 한 번 보안 규칙을 바꿔야 합니다. <b>관리자(앱 주인)만</b> 아래를 따라 하세요.</p>${rulesSteps}
+      <p class="help">규칙을 게시하면 관리자와 등록된 팀원만 이 앱에 로그인할 수 있게 됩니다.</p>`;
+    if (teamStat === "none") return `<div class="label">팀 만들기</div>
+      <p class="help">보안 규칙이 준비됐습니다. 팀 이름을 정하고 팀을 만드세요. 팀원 등록은 다음 단계에서 합니다.</p>
+      <div class="row" style="margin-top:8px"><input id="tmName" type="text" placeholder="예: 영업1팀" aria-label="팀 이름" style="flex:1 1 160px;min-width:0"><button class="btn primary" data-act="teamcreate" type="button">팀 만들기</button></div>
+      <div class="status" id="tmStatus"></div>`;
+    const t = teamInfo || {}, mem = (t.members || []).slice().sort();
+    if (!isTeamOwner()) return `<div class="label">팀 명함첩 · ${esc(t.name || "")}</div>
+      <p class="help">팀 멤버로 등록되어 있습니다. 관리자: ${esc(t.ownerName || "")} ${esc(t.owner || "")}<br>내 명함은 나만 보고, 명함 화면에서 <b>팀에 공유</b>를 누른 명함만 팀 명함첩에 올라갑니다.</p>`;
+    return `<div class="label">팀 명함첩 관리 · ${esc(t.name || "")}</div>
+      <p class="help">아래에 등록한 구글 이메일만 이 앱에 로그인할 수 있습니다. (관리자: 나)</p>
+      <div class="mem-list">${mem.length ? mem.map(e => `<div class="mem-row"><span>${esc(e)}</span><button class="copy" data-act="teamdelmem" data-em="${esc(e)}" type="button">빼기</button></div>`).join("") : `<p class="help" style="margin:0">아직 등록한 팀원이 없습니다.</p>`}</div>
+      <div class="row" style="margin-top:10px"><input id="tmEmail" type="email" placeholder="팀원 구글 이메일 (예: hong@gmail.com)" aria-label="팀원 구글 이메일" style="flex:1 1 200px;min-width:0" autocomplete="off"><button class="btn primary" data-act="teamaddmem" type="button">팀원 추가</button></div>
+      <div class="status" id="tmStatus"></div>
+      <div class="row" style="margin-top:10px"><button class="btn" data-act="teaminvite" type="button">팀원 안내 문구 복사</button><button class="btn ghost" data-act="teamrules" type="button">보안 규칙 다시 복사</button></div>
+      <p class="help">팀원을 빼면 그 사람은 앱에 로그인할 수 없게 됩니다. 그 사람이 공유했던 팀 명함은 남습니다. 빼기 전에 본인 명함은 <b>엑셀 받기</b>로 챙겨 두도록 알려 주세요.</p>
+      <textarea id="rulesBox" rows="6" readonly hidden style="width:100%;margin-top:8px;font-family:var(--f-mono);font-size:12px">${esc(rulesText(myEmail()))}</textarea>`;
+  }
+  function refreshAccount() { const b = $("#teamBlock"); if (b && !sheet.hidden) b.innerHTML = teamBlockHtml(); }
+  async function teamCreate() {
+    const name = ($("#tmName")?.value || "").trim(), st = $("#tmStatus");
+    if (!name) { $("#tmName")?.focus(); return; }
+    st.className = "status"; st.textContent = "팀을 만드는 중…";
+    try {
+      await teamRef.set({ name, owner: myEmail(), ownerUid: uid, ownerName: (me && me.displayName) || "", members: [], createdAt: Date.now() });
+      toast(`${name} 팀을 만들었습니다. 이제 팀원을 등록하세요`);
+    } catch (e) {
+      st.className = "status err";
+      st.textContent = e && e.code === "permission-denied" ? "팀을 만들 권한이 없습니다. 보안 규칙에 적힌 관리자 이메일이 지금 로그인한 계정과 같은지 확인해 주세요." : errText(e);
+    }
+  }
+  async function teamAddMember() {
+    const inp = $("#tmEmail"), st = $("#tmStatus");
+    const em = String(inp?.value || "").trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(em)) { st.className = "status err"; st.textContent = "구글 이메일 주소를 정확히 적어 주세요."; inp?.focus(); return; }
+    if (em === myEmail()) { st.className = "status err"; st.textContent = "관리자는 따로 등록하지 않아도 됩니다."; return; }
+    if ((teamInfo.members || []).includes(em)) { st.className = "status err"; st.textContent = "이미 등록된 팀원입니다."; return; }
+    try { await teamRef.update({ members: firebase.firestore.FieldValue.arrayUnion(em) }); toast(`${em} 님을 팀원으로 등록했습니다`); }
+    catch (e) { st.className = "status err"; st.textContent = errText(e); }
+  }
+  const DENIED_HTML = () => `<div class="gate-card">
+      <img src="icons/icon-192.png" alt="" width="72" height="72">
+      <h2>아직 등록되지 않은 계정입니다</h2>
+      <p>이 명함첩은 팀에 등록된 사람만 쓸 수 있습니다. 팀 관리자에게 아래 이메일을 팀원으로 등록해 달라고 요청하세요.</p>
+      <p><b>${esc(myEmail())}</b></p>
+      <p class="help">관리자라면: Firebase 보안 규칙에 적은 관리자 이메일이 이 계정과 같은지 확인하세요.</p>
+      <div class="row" style="justify-content:center;margin-top:10px"><button class="btn" data-act="retry" type="button">다시 확인</button><button class="btn ghost" data-act="signout" type="button">다른 계정으로 로그인</button></div>
+    </div>`;
+
   function showAccount() {
     if (!me) return;
     const mineRows = state.mine.slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -2273,6 +2645,7 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
         <div class="row" style="margin-top:10px"><button class="btn primary" data-act="mineadd" type="button">+ 내 명함 ${mineRows.length ? "추가" : "등록"}</button></div>
         ${mineRows.length ? `<p class="help">회사가 바뀌었거나 영문 명함이 있으면 여러 장 등록할 수 있습니다. 명함을 누르면 보기·수정·보내기를 할 수 있어요.</p>` : ""}
       </div>
+      <div class="block" id="teamBlock">${teamBlockHtml()}</div>
       <div class="block">
       <p style="margin:0"><b>${esc(me.email || me.displayName || "")}</b>(으)로 로그인되어 있습니다.</p>
       <p class="help">폰과 PC에서 같은 구글 계정으로 로그인하면 명함이 자동으로 함께 보입니다. 인터넷이 끊겨도 이 기기에 저장해 두었다가 연결되면 올립니다.</p>
@@ -2295,6 +2668,7 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
     firebase.auth().getRedirectResult().catch(() => {});
     firebase.auth().onAuthStateChanged(user => {
       if (unsub) { unsub(); unsub = null; }
+      stopTeam();
       me = user;
       if (!user) {
         state.cards = []; state.mine = []; state.loaded = false; state.mode = "loading"; uid = null; cardsCol = photosCol = null;
@@ -2310,15 +2684,18 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
       cardsCol = vault.collection("cards");
       photosCol = vault.collection("photos");
       state.mode = "db"; state.loaded = false; render();
+      startTeam(fdb);
       unsub = cardsCol.onSnapshot(snap => {
         const all = snap.docs.map(x => ({ ...x.data(), id: x.id }));
         state.cards = all.filter(c => !c.mine); state.mine = all.filter(c => c.mine);
-        state.loaded = true; render();
+        state.loaded = true; render(); fixTeam();
         // 다른 기기에서 지운 명함을 보고 있었다면 닫기
         if (!sheet.hidden && sheet.dataset.id && $("#delWrap") && !getCard(sheet.dataset.id)) closeSheet();
       }, err => {
         state.loaded = true; render();
-        toast(err && err.code === "permission-denied" ? "명함을 읽을 권한이 없습니다. 설치 안내서 4단계(보안 규칙)를 확인해 주세요." : "명함을 불러오지 못했습니다. 새로고침해 주세요.");
+        // 팀 보안 규칙을 쓰는 중이고, 관리자도 팀원도 아닌 계정
+        if (err && err.code === "permission-denied") { stopTeam(); render(); if (!sheet.hidden) closeSheet(); showGate(DENIED_HTML()); return; }
+        toast("명함을 불러오지 못했습니다. 새로고침해 주세요.");
       });
     });
   }

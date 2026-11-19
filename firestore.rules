@@ -1,9 +1,40 @@
+// 내 명함첩 보안 규칙 (팀 명함첩 버전)
+// 가장 쉬운 방법: 앱에서 「계정 → 팀 명함첩 → 보안 규칙 복사」를 누르면 관리자 이메일이 채워진 규칙이 복사됩니다.
+// 직접 붙여 넣을 때는 아래 ownerEmail()의 이메일을 관리자(앱 주인) 구글 이메일로 바꾸세요.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 각 사람의 명함은 그 사람 본인만 읽고 쓸 수 있습니다.
+    // 팀 관리자(앱 주인)의 구글 이메일 — 소문자로 적습니다.
+    function ownerEmail() { return "관리자구글이메일@gmail.com"; }
+
+    function signedIn() { return request.auth != null && request.auth.token.email != null && request.auth.token.email_verified == true; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function isOwner() { return signedIn() && myEmail() == ownerEmail(); }
+    function teamPath() { return /databases/$(database)/documents/teams/main; }
+    function isMember() { return signedIn() && exists(teamPath()) && myEmail() in get(teamPath()).data.members; }
+    // 관리자와 팀 멤버로 등록된 사람만 앱을 쓸 수 있습니다.
+    function allowed() { return isOwner() || isMember(); }
+    function myShare(id) { return id.matches(request.auth.uid + '_.+'); }
+
+    // 각자의 명함은 본인만 읽고 씁니다.
     match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if request.auth != null && request.auth.uid == uid && allowed();
+    }
+    // 팀 정보(이름·멤버)는 멤버가 보고, 관리자만 바꿉니다.
+    match /teams/main {
+      allow read: if allowed();
+      allow write: if isOwner();
+    }
+    // 팀 명함: 멤버 모두 보고, 공유한 사람만 올리고 고칩니다. 관리자는 내릴 수 있습니다.
+    match /teams/main/cards/{id} {
+      allow read: if allowed();
+      allow create, update: if allowed() && myShare(id) && request.resource.data.by == request.auth.uid;
+      allow delete: if allowed() && (myShare(id) || isOwner());
+    }
+    match /teams/main/photos/{id} {
+      allow read: if allowed();
+      allow create, update: if allowed() && myShare(id);
+      allow delete: if allowed() && (myShare(id) || isOwner());
     }
   }
 }
