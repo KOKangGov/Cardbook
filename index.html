@@ -386,6 +386,21 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
 .mem-row span{overflow-wrap:anywhere}
 .steps{margin:8px 0 0;padding-left:20px;font-size:14px;line-height:1.7}
 .tag-sub{font-size:12px;color:var(--muted)}
+/* 여러 장 선택 */
+.list-head .btn{padding:5px 11px;font-size:13px}
+.card .pk{position:absolute;top:8px;right:8px;width:20px;height:20px;border-radius:50%;border:2px solid var(--line);background:var(--surface);display:grid;place-items:center;font-size:12px;font-weight:700;color:var(--accent-ink)}
+.card.picked{outline:2.5px solid var(--accent);outline-offset:-1px}
+.card.picked .pk{background:var(--accent);border-color:var(--accent)}
+.selecting .card .tmk{right:34px}
+.tbl tr.picked td{background:var(--accent-soft)!important}
+.tbl .pkb{display:inline-block;width:15px;height:15px;border-radius:4px;border:2px solid var(--line);margin-right:7px;vertical-align:-2px;text-align:center;font-size:10px;line-height:11px;color:var(--accent-ink)}
+.tbl tr.picked .pkb{background:var(--accent);border-color:var(--accent)}
+.selbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:30;display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center;
+  background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:8px 10px;box-shadow:0 10px 30px -8px rgba(24,34,45,.35);width:max-content;max-width:calc(100vw - 20px)}
+.selbar .cnt{font-weight:700;font-size:14px;padding:0 6px}
+.selbar .btn{padding:7px 11px;font-size:13.5px}
+body.selecting .wrap{padding-bottom:90px}
+body.selecting .toast{bottom:calc(84px + env(safe-area-inset-bottom,0px))}
 </style>
 
 </head>
@@ -444,13 +459,14 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
   </section>
 
   <section class="list">
-    <div class="list-head"><div class="label" id="listLabel">전체 명함</div></div>
+    <div class="list-head"><div class="label" id="listLabel">전체 명함</div><button class="btn ghost" id="btnSel" type="button" hidden>여러 장 선택</button></div>
     <div id="listArea"></div>
   </section>
 </div>
 
 <div class="scrim" id="scrim" hidden></div>
 <section class="sheet" id="sheet" role="dialog" aria-modal="true" hidden></section>
+<div class="selbar" id="selBar" role="toolbar" aria-label="선택한 명함" hidden></div>
 <div class="toast" id="toast" hidden></div>
 
 <script>
@@ -479,6 +495,7 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
 
   const state = { mine: [], cards: [], team: [], teamG: [], scope: "me", q: "", tag: "", sort: "company", view: "card", tk: "", tdir: 1, mode: "loading", loaded: false };
   // 팀 명함첩: teams/main (팀 정보·멤버), teams/main/cards (공유된 명함), teams/main/photos (공유된 사진)
+  let sel = null; // 여러 장 선택 중이면 고른 명함 id 모음
   let teamRef = null, teamCards = null, teamPhotos = null, teamInfo = null, teamStat = "off", teamLoaded = false, teamFixed = false, teamSrv = false, unsubTeam = null, unsubTeamCards = null;
   let db = null, uid = null, vault = null, cardsCol = null, photosCol = null, downloads = null, imageOK = true, installEvt = null;
   const local = { photos: {} };
@@ -654,6 +671,71 @@ header.top .btn:focus-visible{outline-color:var(--head-ink)}
       render(); showDetail(nid);
     } catch (e) { toast(errText(e)); }
   }
+  // ---------- 여러 장 골라 한꺼번에 팀에 공유 ----------
+  function togglePick(id) { if (!sel) return; sel.has(id) ? sel.delete(id) : sel.add(id); render(); }
+  function endSelect() { sel = null; document.body.classList.remove("selecting"); render(); }
+  function renderSelBar() {
+    const bar = $("#selBar");
+    if (!sel) { bar.hidden = true; bar.innerHTML = ""; document.body.classList.remove("selecting"); return; }
+    const picked = state.cards.filter(c => sel.has(c.id)), shared = picked.filter(c => c.team).length;
+    const vis = filtered(), allOn = vis.length && vis.every(c => sel.has(c.id));
+    bar.hidden = false;
+    bar.innerHTML = `<span class="cnt">${picked.length}장 선택</span>
+      <button class="btn" data-sel="${allOn ? "none" : "all"}" type="button">${allOn ? "선택 해제" : (state.q || state.tag ? `검색된 ${vis.length}장 모두` : "전체 선택")}</button>
+      <button class="btn primary" data-sel="share" type="button" ${picked.length ? "" : "disabled"}>팀에 공유</button>
+      ${shared ? `<button class="btn danger" data-sel="unshare" type="button">공유 해제 ${shared}장</button>` : ""}
+      <button class="btn ghost" data-sel="cancel" type="button">취소</button>`;
+  }
+  async function selAction(a, btn) {
+    if (!sel) return;
+    if (a === "cancel") return endSelect();
+    if (a === "all") { for (const c of filtered()) sel.add(c.id); return render(); }
+    if (a === "none") { for (const c of filtered()) sel.delete(c.id); return render(); }
+    const picked = state.cards.filter(c => sel.has(c.id));
+    if (a === "share") return showBulkShare(picked);
+    if (a === "unshare") {
+      const list = picked.filter(c => c.team);
+      if (btn.dataset.sure !== "1") { btn.dataset.sure = "1"; btn.textContent = `정말 ${list.length}장 해제?`; return; }
+      bar_busy(true);
+      let n = 0, fail = 0;
+      for (const c of list) { try { await teamUnshare(c.id); n++; } catch { fail++; } setSelStatus(`공유 해제 중… ${n + fail} / ${list.length}`); }
+      bar_busy(false); endSelect();
+      toast(`${n}장의 팀 공유를 해제했습니다${fail ? ` (${fail}장 실패)` : ""}`);
+    }
+  }
+  function bar_busy(on) { $("#selBar").querySelectorAll("button").forEach(b => b.disabled = on); }
+  function setSelStatus(t) { const c = $("#selBar .cnt"); if (c) c.textContent = t; }
+  function showBulkShare(picked) {
+    const fresh = picked.filter(c => !c.team), already = picked.length - fresh.length;
+    const withPhoto = picked.filter(c => c.hasPhoto).length;
+    openSheet(`
+      <div class="sheet-head"><h2>${picked.length}장 팀에 공유</h2><button class="btn ghost" data-act="close" type="button">닫기</button></div>
+      <p class="help" style="margin-top:0">고른 명함을 <b>${esc((teamInfo && teamInfo.name) || "팀")}</b> 팀 명함첩에 올립니다.${already ? ` 이미 공유 중인 ${already}장은 아래 사진 설정만 맞춥니다.` : ""}</p>
+      <div class="note-box">
+        <b>공유되는 것</b> · 이름, 회사, 부서, 직책, 휴대폰, 전화, 팩스, 이메일, 주소, 웹사이트, 태그<br>
+        <b>공유되지 않는 것</b> · 메모, 연락 기록, 다음 연락일, 만난 곳·날
+      </div>
+      <div class="note-box" style="max-height:180px;overflow:auto">${picked.slice(0, 200).map(c => `${esc(c.name || "(이름 없음)")} <span class="tag-sub">${esc(c.company || "")}${c.team ? " · 공유 중" : ""}</span>`).join("<br>")}${picked.length > 200 ? `<br>… 외 ${picked.length - 200}장` : ""}</div>
+      ${withPhoto ? `<label class="check"><input type="checkbox" id="bkPhoto"> 명함 사진도 공유 <span class="tag-sub">(사진 있는 명함 ${withPhoto}장)</span></label>` : ""}
+      <div class="status" id="bkStatus"></div>
+      <div class="footer-actions"><span></span><button class="btn primary" data-act="bulkshare" type="button">${picked.length}장 공유하기</button></div>`);
+  }
+  async function bulkShare() {
+    if (!sel) return;
+    const picked = state.cards.filter(c => sel.has(c.id));
+    const photo = $("#bkPhoto") ? $("#bkPhoto").checked : false;
+    const st = $("#bkStatus");
+    sheet.querySelectorAll("button").forEach(b => b.disabled = true);
+    let n = 0, fail = 0;
+    for (const c of picked) {
+      if (c.team && !!c.team.photo === !!(photo && c.hasPhoto)) { n++; }
+      else { try { await teamShare(c.id, photo); n++; } catch { fail++; } }
+      st.className = "status"; st.textContent = `공유하는 중… ${n + fail} / ${picked.length}`;
+    }
+    closeSheet(); endSelect();
+    toast(`${n}장을 팀 명함첩에 공유했습니다${fail ? ` (${fail}장 실패)` : ""}`);
+  }
+
   // 보안 규칙: 관리자 이메일 + 팀 멤버만 앱 사용, 팀 명함은 공유한 사람만 수정
   function rulesText(owner) {
     return `rules_version = '2';
@@ -805,6 +887,10 @@ service cloud.firestore {
       `<button class="due-row" data-id="${esc(c.id)}" type="button" style="--h:${hueOf(c.company || c.name)}"><span class="mk" aria-hidden="true">${esc(initOf(c.name || c.company))}</span><span class="who"><strong>${esc(c.name || "(이름 없음)")}</strong> <span class="sub">${esc([c.company, c.title].filter(Boolean).join(" · "))}</span></span><span class="pill ${i.cls}">${i.text}</span></button>`).join("");
 
     const list = filtered();
+    const canSel = !isT && teamOn() && state.cards.length > 0;
+    if (!canSel && sel) sel = null;
+    $("#btnSel").hidden = !canSel || !!sel;
+    renderSelBar();
     $("#listLabel").textContent = state.q || state.tag ? `검색 결과 ${list.length}장` : isT ? "팀에 공유된 명함" : "전체 명함";
     const area = $("#listArea");
     if (!state.loaded || (isT && !teamLoaded)) { area.innerHTML = `<div class="empty">명함첩을 여는 중입니다…</div>`; return; }
@@ -825,9 +911,9 @@ service cloud.firestore {
     const cardHtml = c => {
       const i = dueInfo(c);
       const hit = matchLine(c, q);
-      return `<button class="card" data-id="${esc(c.id)}" type="button" style="--h:${hueOf(c.company || c.name)}">
+      return `<button class="card${sel && sel.has(c.id) ? " picked" : ""}" data-id="${esc(c.id)}" type="button"${sel ? ` aria-pressed="${sel.has(c.id)}"` : ""} style="--h:${hueOf(c.company || c.name)}">
         <span class="mk" aria-hidden="true">${esc(initOf(c.company || c.name))}</span>
-        ${i && i.cls === "over" ? `<span class="dot" title="연락할 때가 됐어요"></span>` : ""}
+        ${sel ? `<span class="pk" aria-hidden="true">${sel.has(c.id) ? "✓" : ""}</span>` : i && i.cls === "over" ? `<span class="dot" title="연락할 때가 됐어요"></span>` : ""}
         ${c.team && !isT ? `<span class="tmk" title="팀 명함첩에 공유 중">팀</span>` : ""}
         <span class="co">${hl(c.company || " ", q)}</span>
         <span><span class="nm" style="display:block">${hl(c.name || "(이름 없음)", q)}</span><span class="tt" style="display:block">${hl([c.dept, c.title].filter(Boolean).join(" · ") || " ", q)}</span>${isT ? `<span class="by">공유 · ${esc(c.byLine || "")}</span>` : ""}</span>
@@ -882,12 +968,12 @@ service cloud.firestore {
       const tds = COLS.map(([k, , cls]) => {
         const v = cellVal(c, k);
         const inner = k === "name"
-          ? (i && i.cls === "over" ? `<span class="dot" title="연락할 때가 됐어요"></span>` : "") + (v ? hl(v, q) : `<span class="muted">(이름 없음)</span>`)
+          ? (sel ? `<span class="pkb" aria-hidden="true">${sel.has(c.id) ? "✓" : ""}</span>` : "") + (i && i.cls === "over" ? `<span class="dot" title="연락할 때가 됐어요"></span>` : "") + (v ? hl(v, q) : `<span class="muted">(이름 없음)</span>`)
           : k === "company" && v ? `<i class="cdot" style="--h:${hueOf(v)}"></i>` + hl(v, q)
           : hl(v, q);
         return `<td${cls ? ` class="${cls}"` : ""}${v.length > 18 ? ` title="${esc(v)}"` : ""}>${inner}</td>`;
       }).join("");
-      return `<tr data-id="${esc(c.id)}" tabindex="0">${tds}</tr>`;
+      return `<tr data-id="${esc(c.id)}" tabindex="0"${sel && sel.has(c.id) ? ` class="picked"` : ""}>${tds}</tr>`;
     }).join("");
     const ws = colWs(), wst = Object.entries(ws).map(([k, v]) => `--w-${k}:${v}px`).join(";");
     return `<div class="tbl-hs" aria-hidden="true" hidden><div></div></div><div class="tbl-wrap"><table class="tbl"${wst ? ` style="${wst}"` : ""}><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -2364,9 +2450,11 @@ service cloud.firestore {
     const th = e.target.closest(".tbl th[data-tk]");
     if (th) { const k = th.dataset.tk; if (state.tk === k) { if (state.tdir > 0) state.tdir = -1; else state.tk = ""; } else { state.tk = k; state.tdir = 1; } try { state.tk ? localStorage.setItem("cb.tsort", state.tk + ":" + state.tdir) : localStorage.removeItem("cb.tsort"); } catch {} render(); return; }
     const tr = e.target.closest(".tbl tbody tr[data-id]");
-    if (tr) { if (String(window.getSelection() || "").length) return; return showDetail(tr.dataset.id); }
+    if (tr) { if (String(window.getSelection() || "").length) return; if (sel) return togglePick(tr.dataset.id); return showDetail(tr.dataset.id); }
     const t = e.target.closest("button,[data-act]"); if (!t) return;
     if (t.dataset.view) { setView(t.dataset.view); render(); return; }
+    if (t.id === "btnSel") { sel = new Set(); document.body.classList.add("selecting"); render(); toast("팀에 공유할 명함을 눌러서 고르세요"); return; }
+    if (t.dataset.sel) return selAction(t.dataset.sel, t);
     if (t.dataset.scope) { if (state.scope !== t.dataset.scope) { state.scope = t.dataset.scope; state.tag = ""; render(); } return; }
     if (t.id === "btnLogin") return signIn();
     if (t.id === "btnAccount") return showAccount();
@@ -2395,6 +2483,7 @@ service cloud.firestore {
       case "mergenew": { sheet.dataset.dupOk = "1"; sheet.dataset.mergeId = ""; const b = $("#matchBox"); if (b) { b.hidden = true; b.innerHTML = ""; } return saveEdit(); }
     }
     if (t.classList.contains("chip")) { state.tag = t.dataset.tag; render(); return; }
+    if (sel && t.classList.contains("card") && t.dataset.id) return togglePick(t.dataset.id);
     if ((t.classList.contains("card") || t.classList.contains("due-row")) && t.dataset.id) return showDetail(t.dataset.id);
     if (t.dataset.copy != null) return copy(t.dataset.copy, t);
     if (t.id === "btnRead") return readCard();
@@ -2443,6 +2532,7 @@ service cloud.firestore {
         return;
       }
       case "teamimport": return teamImport(id);
+      case "bulkshare": return bulkShare();
       case "teamcreate": return teamCreate();
       case "teamaddmem": return teamAddMember();
       case "teamdelmem": {
